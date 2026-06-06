@@ -43,20 +43,13 @@ jobs:
         shell: bash
         run: |
           cd publish/${{ matrix.rid }}
-          case "${{ matrix.rid }}" in
-            win-*)
-              zip "../../shoko-companion-${{ matrix.rid }}.zip" shoko-companion.exe
-              ;;
-            *)
-              tar czf "../../shoko-companion-${{ matrix.rid }}.tar.gz" shoko-companion
-              ;;
-          esac
+          zip "../../shoko-companion-${{ matrix.rid }}.zip" shoko-companion*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: shoko-companion-${{ matrix.rid }}
-          path: shoko-companion-${{ matrix.rid }}.*
+          path: shoko-companion-${{ matrix.rid }}.zip
 
   upload:
     name: Upload assets to release
@@ -71,4 +64,4 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v3
         with:
-          files: shoko-companion-*
+          files: shoko-companion-*.zip

@@ -58,9 +58,15 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -o publish/${{ matrix.rid }}
 
+      - name: Archive binary
+        shell: bash
+        run: |
+          cd publish/${{ matrix.rid }}
+          zip "../../shoko-companion-${{ matrix.rid }}.zip" shoko-companion*
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: shoko-companion-${{ matrix.rid }}
-          path: publish/${{ matrix.rid }}
+          path: shoko-companion-${{ matrix.rid }}.zip
           if-no-files-found: error
