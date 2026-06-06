@@ -23,6 +23,7 @@ public partial class MainWindow : Window
 
     private static readonly string[] LogLevelValues = ["Trace", "Debug", "Info", "Warn", "Error"];
     private readonly ObservableCollection<ServerConnection> _connections;
+    private bool _loadingSettings;
 
     /// <summary>
     /// Creates the window, loads current settings, and (in DEBUG builds) adds
@@ -198,6 +199,7 @@ public partial class MainWindow : Window
 
     private void LoadSettings()
     {
+        _loadingSettings = true;
         var s = SettingsProvider.Instance.Settings;
         MpvPathBox.Text = s.MpvPath ?? string.Empty;
 
@@ -224,6 +226,8 @@ public partial class MainWindow : Window
         // Set the log level combo to the saved value
         var levelIndex = Array.IndexOf(LogLevelValues, s.LogLevel);
         LogLevelCombo.SelectedIndex = levelIndex >= 0 ? levelIndex : 2; // default to "Info"
+
+        _loadingSettings = false;
     }
 
     private async void OnAddConnectionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -291,6 +295,7 @@ public partial class MainWindow : Window
 
     private void OnAutoSaveSetting(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        if (_loadingSettings) return;
         var s = SettingsProvider.Instance.Settings;
         s.MpvPath = string.IsNullOrWhiteSpace(MpvPathBox.Text) ? null : MpvPathBox.Text.Trim();
         s.MpvFullScreen = MpvFullScreenCheck.IsChecked == true;
