@@ -34,11 +34,20 @@ jobs:
   publish:
     name: Publish (${{ matrix.rid }})
     needs: build-test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        rid: [ win-x64, linux-x64, linux-arm64, osx-arm64 ]
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-latest
+          - rid: linux-arm64
+            os: ubuntu-latest
+          - rid: osx-arm64
+            os: macos-latest
+
     steps:
       - uses: actions/checkout@v6
 
@@ -48,6 +57,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Publish single-file (${{ matrix.rid }})
+        shell: bash
         run: >
           dotnet publish Shoko.Companion/Shoko.Companion.csproj
           -c Release
@@ -56,17 +66,29 @@ jobs:
           -p:SelfContained=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
-          -o publish/${{ matrix.rid }}
+          -o publish
 
-      - name: Archive binary
+      - name: Package (Windows)
+        if: matrix.rid == 'win-x64'
         shell: bash
-        run: |
-          cd publish/${{ matrix.rid }}
-          zip "../../shoko-companion-${{ matrix.rid }}.zip" shoko-companion*
+        run: iscc /DSourceDir="${{ github.workspace }}\publish" packaging/win/installer.iss
+
+      - name: Package (Linux)
+        if: startsWith(matrix.rid, 'linux-')
+        shell: bash
+        run: bash packaging/linux/build.sh ${{ matrix.rid }}
+
+      - name: Package (macOS)
+        if: matrix.rid == 'osx-arm64'
+        shell: bash
+        run: bash packaging/osx/build.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: shoko-companion-${{ matrix.rid }}
-          path: shoko-companion-${{ matrix.rid }}.zip
+          path: |
+            shoko-companion.Installer.exe
+            shoko-companion-*.AppImage
+            shoko-companion-*-*.dmg
           if-no-files-found: error

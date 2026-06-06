@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Shoko Companion
+Exec=shoko-companion %u
+Icon=shoko-companion
+StartupNotify=false
+MimeType=x-scheme-handler/shoko;
+Categories=AudioVideo;Player;
