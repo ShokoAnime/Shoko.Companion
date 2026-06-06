@@ -1,0 +1,20 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Source
+*.cs       text diff=csharp
+*.csproj   text
+*.axaml    text
+*.json     text
+*.yml      text
+*.md       text
+
+# Windows scripts keep CRLF
+*.ps1      text eol=crlf
+*.cmd      text eol=crlf
+*.bat      text eol=crlf
+
+# Binary assets
+*.ico      binary
+*.png      binary
+*.jpg      binary

@@ -1,0 +1,29 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Shoko.Companion.Windows.RouteEditDialog"
+        Title="Edit Route"
+         Width="480"
+         Height="220"
+        CanResize="False">
+    <Grid RowDefinitions="*" Margin="16">
+        <StackPanel Spacing="10">
+
+            <TextBlock Text="Server address:" FontWeight="SemiBold"/>
+            <TextBox Name="BaseUrlBox"
+                     Watermark="e.g. myserver:8111 or myserver:8111/subpath"/>
+
+            <CheckBox Name="UseHttpsCheck" Content="Use HTTPS"/>
+
+            <TextBlock Name="PreviewText" FontSize="12" Foreground="Gray"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8"
+                        Margin="0,12,0,0">
+                <Button Name="SaveButton" Content="Save" Click="OnSaveClick"
+                        MinWidth="80" IsDefault="True"/>
+                <Button Name="CancelButton" Content="Cancel" Click="OnCancelClick"
+                        MinWidth="80"/>
+            </StackPanel>
+
+        </StackPanel>
+    </Grid>
+</Window>

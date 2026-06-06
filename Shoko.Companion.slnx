@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Shoko.Companion.Tests/Shoko.Companion.Tests.csproj" />
+  <Project Path="Shoko.Companion/Shoko.Companion.csproj" />
+</Solution>

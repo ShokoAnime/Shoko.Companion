@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Shoko.Companion.Windows.AddConnectionDialog"
+        Title="Add Connection"
+         Width="640"
+         Height="550"
+        CanResize="False">
+    <Grid RowDefinitions="*" Margin="16">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="8" Name="FormPanel">
+
+                <TextBlock Text="Connection name:" FontWeight="SemiBold"/>
+                <TextBox Name="NameBox" Watermark="e.g. My Home Server"/>
+
+                <TextBlock Text="Routes (probed in order):" FontWeight="SemiBold"/>
+                <ListBox Name="RouteListBox" Height="100">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding FullUrl}" TextTrimming="CharacterEllipsis"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Name="AddRouteButton" Content="Add" Click="OnAddRouteClick" MinWidth="60"/>
+                    <Button Name="EditRouteButton" Content="Edit" Click="OnEditRouteClick" MinWidth="60" IsEnabled="False"/>
+                    <Button Name="RemoveRouteButton" Content="Remove" Click="OnRemoveRouteClick" MinWidth="70" IsEnabled="False"/>
+                    <Button Name="MoveUpButton" Content="▲" Click="OnMoveUpClick" Width="32" IsEnabled="False"/>
+                    <Button Name="MoveDownButton" Content="▼" Click="OnMoveDownClick" Width="32" IsEnabled="False"/>
+                </StackPanel>
+
+                <Separator Margin="0,4"/>
+
+                <TextBlock Text="API Key:" FontWeight="SemiBold"/>
+                <TextBox Name="ApiKeyBox" Watermark="Paste your Shoko API key here"
+                         TextChanged="OnApiKeyTextChanged"/>
+
+                <TextBlock Text="Or login with username/password:" FontWeight="SemiBold"/>
+                <Grid ColumnDefinitions="*,*">
+                    <TextBox Name="UsernameBox" Watermark="Username" Grid.Column="0" Margin="0,0,4,0"/>
+                    <TextBox Name="PasswordBox" Watermark="Password" PasswordChar="*" Grid.Column="1"/>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Name="LoginButton" Content="Login &amp; Fetch Key"
+                            Click="OnLoginClick" HorizontalAlignment="Left"/>
+                </StackPanel>
+
+                <TextBlock Name="StatusText" FontSize="13" Foreground="Gray"/>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8"
+                            Margin="0,12,0,0">
+                    <Button Name="SaveButton" Content="Save" Click="OnSaveClick" MinWidth="80" IsDefault="True"/>
+                    <Button Name="CancelButton" Content="Cancel" Click="OnCancelClick" MinWidth="80"/>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

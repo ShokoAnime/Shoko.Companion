@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Shoko.Companion.Windows.MpvNotFoundDialog"
+        Title="mpv Not Found"
+        Width="480"
+        Height="300"
+        CanResize="False">
+    <Grid RowDefinitions="*" Margin="20">
+        <StackPanel Spacing="12">
+            <TextBlock Text="mpv player was not found on your system."
+                       FontSize="14" FontWeight="Bold" TextWrapping="Wrap"/>
+            <TextBlock TextWrapping="Wrap" FontSize="13">
+                Set the path below, or visit the mpv website for installation instructions for your platform.
+            </TextBlock>
+
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                <TextBlock Text="mpv executable path" Grid.Row="0" Grid.ColumnSpan="2"/>
+                <TextBox Name="MpvPathBox" Watermark="e.g. /usr/bin/mpv" Grid.Row="1" Grid.Column="0"
+                         TextChanged="OnPathTextChanged"/>
+                <Button Name="BrowseButton" Content="Browse…" Click="OnBrowseClick"
+                        Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>
+            </Grid>
+
+            <Button Name="LearnMoreButton" Content="Learn more at mpv.io" Click="OnLearnMoreClick"
+                    HorizontalAlignment="Center"/>
+
+            <TextBlock Name="StatusText" FontSize="13" Foreground="Gray"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8"
+                        Margin="0,12,0,0">
+                <Button Name="RescanButton" Content="Rescan" Click="OnRescanClick" MinWidth="80"/>
+                <Button Name="SaveButton" Content="Save" Click="OnSaveClick" MinWidth="80" IsDefault="True" IsEnabled="False"/>
+                <Button Name="CancelButton" Content="Cancel" Click="OnCancelClick" MinWidth="80"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

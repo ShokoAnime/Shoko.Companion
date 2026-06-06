@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch shoko-companion",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Shoko.Companion/bin/Debug/net10.0/shoko-companion.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/Shoko.Companion/bin/Debug/net10.0",
+            "env": {
+                // Isolated config/logs home so debugging doesn't touch your real user config.
+                "SHOKO_COMPANION_HOME": "${workspaceFolder}/companion-dev"
+            },
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "requireExactSource": false
+        },
+        {
+            "name": "Launch shoko-companion (with URL)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Shoko.Companion/bin/Debug/net10.0/shoko-companion.dll",
+            // Replace the playlist id and apikey with real values to exercise the playback flow.
+            "args": [
+              "shoko:http://localhost:8111/api/v3/Playlist/Generate.m3u8?playlist=s1&apikey=REPLACE_WITH_APIKEY"
+            ],
+            "cwd": "${workspaceFolder}/Shoko.Companion/bin/Debug/net10.0",
+            "env": {
+                "SHOKO_COMPANION_HOME": "${workspaceFolder}/companion-dev"
+            },
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "requireExactSource": false
+        }
+    ]
+}

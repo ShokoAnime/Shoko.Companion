@@ -1,0 +1,31 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Shoko.Companion.Windows.MappingEditDialog"
+        Title="Add Mapping"
+        Width="500"
+        Height="240"
+        CanResize="False">
+    <Grid RowDefinitions="*" Margin="16">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="8">
+
+                <TextBlock Text="Server folder:" FontWeight="SemiBold"/>
+                <ComboBox Name="FolderCombo" MinWidth="300" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Local path:" FontWeight="SemiBold"/>
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0" Name="LocalPathBox" Watermark="e.g. /home/user/media/anime"/>
+                    <Button Grid.Column="1" Name="BrowseButton" Content="Browse…"
+                            Click="OnBrowseClick" Margin="12,0,0,0" MinWidth="80"/>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8"
+                            Margin="0,12,0,0">
+                    <Button Name="SaveButton" Content="Save" Click="OnSaveClick" MinWidth="80" IsDefault="True"/>
+                    <Button Name="CancelButton" Content="Cancel" Click="OnCancelClick" MinWidth="80"/>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

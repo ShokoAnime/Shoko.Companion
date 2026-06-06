@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Shoko.Companion.Windows.MissingMappingDialog"
+         Title="Add Folder Mapping"
+         Width="520"
+         Height="220"
+         CanResize="False">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="16" ColumnDefinitions="*,Auto">
+
+        <!-- Info text -->
+        <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                   Name="InfoText"
+                   TextWrapping="Wrap" Margin="0,0,0,16"/>
+
+        <!-- Label -->
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="2"
+                   Text="Local path:" FontWeight="SemiBold"
+                   Margin="0,0,0,4"/>
+
+        <!-- Path field + Browse button -->
+        <TextBox Grid.Row="2" Grid.Column="0"
+                 Name="LocalPathBox"
+                 Watermark="Select the local folder..."/>
+        <Button Grid.Row="2" Grid.Column="1"
+                Name="BrowseButton" Content="Browse…"
+                Click="OnBrowseClick"
+                Margin="12,0,0,0" MinWidth="80"/>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right" Spacing="8"
+                    Margin="0,16,0,0">
+            <Button Name="IgnoreButton" Content="Ignore &amp; Don't Ask Again"
+                    Click="OnIgnoreClick" MinWidth="130"/>
+            <Button Name="SaveButton" Content="Save &amp; Open"
+                    Click="OnSaveClick" MinWidth="100" IsDefault="True"/>
+        </StackPanel>
+
+    </Grid>
+</Window>

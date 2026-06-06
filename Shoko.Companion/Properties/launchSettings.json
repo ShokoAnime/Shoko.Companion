@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Shoko.Companion": {
+      "commandName": "Project",
+      "nativeDebugging": true,
+      "environmentVariables": {
+        "SHOKO_COMPANION_HOME": "../companion-dev"
+      }
+    }
+  }
+}

@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore Shoko.Companion/Shoko.Companion.csproj
+
+      - name: Build
+        run: dotnet build Shoko.Companion/Shoko.Companion.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj -c Release
+
+  publish:
+    name: Publish (${{ matrix.rid }})
+    needs: build-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [ win-x64, linux-x64, linux-arm64, osx-arm64 ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish single-file (${{ matrix.rid }})
+        run: >
+          dotnet publish Shoko.Companion/Shoko.Companion.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          -p:PublishSingleFile=true
+          -p:SelfContained=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish/${{ matrix.rid }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shoko-companion-${{ matrix.rid }}
+          path: publish/${{ matrix.rid }}
+          if-no-files-found: error
