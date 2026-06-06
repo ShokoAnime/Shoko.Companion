@@ -99,7 +99,7 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 ### `settings.json` reference
 
 | Key | Type | Default | Description |
-|---|---|---|---|---|
+|-----|------|---------|-------------|
 | `Connections` | array | `[]` | List of server connections (see below). |
 | `MpvPath` | string | `null` | Path to the mpv binary. Auto-discovered and saved on first use. |
 | `MpvFullScreen` | bool | `true` | Launch mpv in full-screen mode. |
