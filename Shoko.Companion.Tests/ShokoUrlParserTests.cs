@@ -169,21 +169,21 @@ public class ShokoUrlParserTests
     [InlineData("http://bare-http")]
     [InlineData("shoko:")]
     [InlineData("shoko:   ")]
-    public void Parse_Invalid_ReturnsNull(string? input)
+    public void Parse_Invalid_ReturnsUnknown(string? input)
     {
-        Assert.Null(ShokoUrlParser.Parse(input!));
+        Assert.Equal(ShokoUrlAction.Unknown, ShokoUrlParser.Parse(input!).Action);
     }
 
     [Fact]
-    public void Parse_MissingAction_ReturnsNull()
+    public void Parse_MissingAction_ReturnsUnknown()
     {
-        Assert.Null(ShokoUrlParser.Parse("shoko:http://server"));
+        Assert.Equal(ShokoUrlAction.Unknown, ShokoUrlParser.Parse("shoko:http://server").Action);
     }
 
     [Fact]
-    public void Parse_UnknownAction_ReturnsNull()
+    public void Parse_UnknownAction_ReturnsUnknown()
     {
-        Assert.Null(ShokoUrlParser.Parse("shoko:http://server/unknown?x=1"));
+        Assert.Equal(ShokoUrlAction.Unknown, ShokoUrlParser.Parse("shoko:http://server/unknown?x=1").Action);
     }
 
 }
