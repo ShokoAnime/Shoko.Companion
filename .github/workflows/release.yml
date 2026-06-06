@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.rid }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, linux-x64, linux-arm64, osx-arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish single-file (${{ matrix.rid }})
+        run: >
+          dotnet publish Shoko.Companion/Shoko.Companion.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          -p:PublishSingleFile=true
+          -p:SelfContained=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish/${{ matrix.rid }}
+
+      - name: Archive binary
+        shell: bash
+        run: |
+          cd publish/${{ matrix.rid }}
+          case "${{ matrix.rid }}" in
+            win-*)
+              zip "../../shoko-companion-${{ matrix.rid }}.zip" shoko-companion.exe
+              ;;
+            *)
+              tar czf "../../shoko-companion-${{ matrix.rid }}.tar.gz" shoko-companion
+              ;;
+          esac
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shoko-companion-${{ matrix.rid }}
+          path: shoko-companion-${{ matrix.rid }}.*
+
+  upload:
+    name: Upload assets to release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shoko-companion-*
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: shoko-companion-*
