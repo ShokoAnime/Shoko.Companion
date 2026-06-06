@@ -14,14 +14,14 @@ APPDIR="$(dirname "$0")/AppDir"
 BUILD_DIR="$(mktemp -d)"
 OUTPUT_NAME="shoko-companion-${RID}.AppImage"
 
-# Download appimagetool
-APPIMAGETOOL="$BUILD_DIR/appimagetool"
-if [ "$ARCH" = "x86_64" ]; then
-    wget -qO "$APPIMAGETOOL" "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-else
-    wget -qO "$APPIMAGETOOL" "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage"
-fi
-chmod +x "$APPIMAGETOOL"
+# Download appimagetool (always x86_64 — runner is x86_64; ARCH env controls target)
+APPIMAGETOOL_IMG="$BUILD_DIR/appimagetool.AppImage"
+wget -qO "$APPIMAGETOOL_IMG" "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+chmod +x "$APPIMAGETOOL_IMG"
+
+# Extract to bypass FUSE requirement on CI runners
+(cd "$BUILD_DIR" && "$APPIMAGETOOL_IMG" --appimage-extract >/dev/null 2>&1)
+APPIMAGETOOL="$BUILD_DIR/squashfs-root/AppRun"
 
 # Build AppDir with the published binary
 mkdir -p "$BUILD_DIR/AppDir/usr/bin"
