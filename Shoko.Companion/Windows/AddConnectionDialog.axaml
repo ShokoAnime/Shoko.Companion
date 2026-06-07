@@ -3,7 +3,7 @@
         x:Class="Shoko.Companion.Windows.AddConnectionDialog"
         Title="Add Connection"
          Width="640"
-         Height="550"
+         Height="510"
         CanResize="False">
     <Grid RowDefinitions="*" Margin="16">
         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
@@ -31,11 +31,7 @@
 
                 <Separator Margin="0,4"/>
 
-                <TextBlock Text="API Key:" FontWeight="SemiBold"/>
-                <TextBox Name="ApiKeyBox" Watermark="Paste your Shoko API key here"
-                         TextChanged="OnApiKeyTextChanged"/>
-
-                <TextBlock Text="Or login with username/password:" FontWeight="SemiBold"/>
+                <TextBlock Text="Login with username/password:" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="*,*">
                     <TextBox Name="UsernameBox" Watermark="Username" Grid.Column="0" Margin="0,0,4,0"/>
                     <TextBox Name="PasswordBox" Watermark="Password" PasswordChar="*" Grid.Column="1"/>

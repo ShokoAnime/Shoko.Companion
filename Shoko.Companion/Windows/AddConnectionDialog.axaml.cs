@@ -10,7 +10,7 @@ namespace Shoko.Companion.Windows;
 
 /// <summary>
 /// Dialog for adding a new server connection.
-/// Supports route configuration, direct API key entry or username/password login to fetch one.
+/// Supports route configuration and username/password login to fetch an API key.
 /// </summary>
 public partial class AddConnectionDialog : Window
 {
@@ -18,6 +18,8 @@ public partial class AddConnectionDialog : Window
     {
         new ConnectionRoute { BaseUrl = "localhost:8111" }
     };
+
+    private string? _fetchedApiKey;
 
     /// <summary>
     /// The created connection, or null if the user cancelled.
@@ -32,7 +34,6 @@ public partial class AddConnectionDialog : Window
         InitializeComponent();
         RouteListBox.ItemsSource = _routes;
         RouteListBox.SelectionChanged += OnSelectionChanged;
-        SaveButton.IsEnabled = false;
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -43,12 +44,6 @@ public partial class AddConnectionDialog : Window
         RemoveRouteButton.IsEnabled = hasSel && _routes.Count > 1;
         MoveUpButton.IsEnabled = hasSel && index > 0;
         MoveDownButton.IsEnabled = hasSel && index < _routes.Count - 1;
-    }
-
-    private void OnApiKeyTextChanged(object? sender, TextChangedEventArgs e)
-    {
-        var key = ApiKeyBox.Text?.Trim();
-        SaveButton.IsEnabled = Guid.TryParse(key, out _) || !string.IsNullOrWhiteSpace(NameBox.Text?.Trim());
     }
 
     private async void OnAddRouteClick(object? sender, RoutedEventArgs e)
@@ -119,9 +114,8 @@ public partial class AddConnectionDialog : Window
 
             if (result.HasApiKey)
             {
-                ApiKeyBox.Text = result.ApiKey;
-                SaveButton.IsEnabled = Guid.TryParse(result.ApiKey, out _);
-                StatusText.Text = "Logged in! API key populated.";
+                _fetchedApiKey = result.ApiKey;
+                StatusText.Text = "Logged in! API key ready.";
                 StatusText.Foreground = Avalonia.Media.Brushes.Green;
             }
             else if (result.ResponseSucceeded)
@@ -167,7 +161,7 @@ public partial class AddConnectionDialog : Window
         {
             Name = name,
             Routes = _routes.ToList(),
-            ApiKey = string.IsNullOrWhiteSpace(ApiKeyBox.Text) ? null : ApiKeyBox.Text.Trim()
+            ApiKey = _fetchedApiKey
         };
 
         Connection = conn;

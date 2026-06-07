@@ -1,15 +1,14 @@
 using System;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Shoko.Companion.Configuration;
 using Shoko.Companion.Server;
 
 namespace Shoko.Companion.Windows;
 
 /// <summary>
-/// Modal dialog that prompts for credentials (API key or username/password login)
-/// for a given server. Used when a new URL arrives without an API key and no
-/// stored connection is found, or when the server returns 401.
-/// Does not include route editing — just credential entry.
+/// Modal dialog that prompts for username/password to authenticate
+/// with a Shoko server and obtain an API key.
 /// </summary>
 public partial class CredentialPromptDialog : Window
 {
@@ -39,13 +38,6 @@ public partial class CredentialPromptDialog : Window
         InitializeComponent();
         _baseUrl = baseUrl;
         TitleText.Text = $"Authentication required for {host}";
-        SaveButton.IsEnabled = false;
-    }
-
-    private void OnApiKeyTextChanged(object? sender, TextChangedEventArgs e)
-    {
-        var key = ApiKeyBox.Text?.Trim();
-        SaveButton.IsEnabled = Guid.TryParse(key, out _);
     }
 
     private async void OnLoginClick(object? sender, RoutedEventArgs e)
@@ -70,10 +62,8 @@ public partial class CredentialPromptDialog : Window
 
             if (result.HasApiKey)
             {
-                ApiKeyBox.Text = result.ApiKey;
-                SaveButton.IsEnabled = Guid.TryParse(result.ApiKey, out _);
-                StatusText.Text = "Logged in! API key populated.";
-                StatusText.Foreground = Avalonia.Media.Brushes.Green;
+                ApiKey = result.ApiKey;
+                Close();
             }
             else if (result.ResponseSucceeded)
             {
@@ -95,20 +85,6 @@ public partial class CredentialPromptDialog : Window
         {
             LoginButton.IsEnabled = true;
         }
-    }
-
-    private void OnSaveClick(object? sender, RoutedEventArgs e)
-    {
-        var key = ApiKeyBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(key) || !Guid.TryParse(key, out _))
-        {
-            StatusText.Text = "Enter a valid API key (GUID format).";
-            StatusText.Foreground = Avalonia.Media.Brushes.Red;
-            return;
-        }
-
-        ApiKey = key;
-        Close();
     }
 
     private void OnCancelClick(object? sender, RoutedEventArgs e)

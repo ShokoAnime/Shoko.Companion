@@ -41,8 +41,6 @@ public partial class EditConnectionDialog : Window
 
         RouteListBox.ItemsSource = _routes;
         RouteListBox.SelectionChanged += OnSelectionChanged;
-
-        ApiKeyBox.Text = connection.ApiKey ?? string.Empty;
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -130,9 +128,10 @@ public partial class EditConnectionDialog : Window
             if (result.HasApiKey)
             {
                 _connection.ApiKey = result.ApiKey;
-                ApiKeyBox.Text = result.ApiKey;
-                StatusText.Text = "Logged in! API key updated.";
-                StatusText.Foreground = Avalonia.Media.Brushes.Green;
+                _connection.Name = NameBox.Text?.Trim() ?? _connection.Name;
+                _connection.Routes = _routes.ToList();
+                SettingsProvider.Instance.Save();
+                Close();
             }
             else if (result.ResponseSucceeded)
             {
@@ -156,36 +155,10 @@ public partial class EditConnectionDialog : Window
         }
     }
 
-    private void OnClearApiKeyClick(object? sender, RoutedEventArgs e)
-    {
-        _connection.ApiKey = null;
-        ApiKeyBox.Text = string.Empty;
-        StatusText.Text = "API key cleared.";
-        StatusText.Foreground = Avalonia.Media.Brushes.Gray;
-    }
-
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
-        var name = NameBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            NameBox.Text = _connection.Name;
-        }
-
         _connection.Name = NameBox.Text?.Trim() ?? _connection.Name;
         _connection.Routes = _routes.ToList();
-
-        // Handle API key: empty = keep existing, valid GUID = replace, invalid = keep
-        var keyText = ApiKeyBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(keyText))
-        {
-            // User cleared the field — keep existing key unchanged
-        }
-        else if (Guid.TryParse(keyText, out _))
-        {
-            _connection.ApiKey = keyText;
-        }
-        // Otherwise: invalid format entered — keep existing key
 
         SettingsProvider.Instance.Save();
         Close();
