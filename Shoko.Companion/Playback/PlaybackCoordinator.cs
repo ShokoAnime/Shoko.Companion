@@ -175,16 +175,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             var baseUrl = await RouteResolver.ResolveBestBaseUrlAsync(parsed.ServerBaseUrl);
             if (string.IsNullOrWhiteSpace(baseUrl))
             {
-                _notifications.Show("Playback Error", "Failed to resolve base URL. Set one in settings or in the url.", NotificationSeverity.Error);
+                _notifications.Show("Playback Error", "Failed to resolve base URL. Set one in settings.", NotificationSeverity.Error);
                 SetState(PlaybackState.Error, "Failed to resolve base URL");
                 return;
             }
 
-            // API key may already be resolved by the parser, or we may need to prompt
-            var apiKey = await ResolveCredentialsAsync(parsed.ServerBaseUrl);
+            var apiKey = await ResolveCredentialsAsync(baseUrl);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _notifications.Show("Playback Error", "No API key configured. Set one in settings or in the url.", NotificationSeverity.Error);
+                _notifications.Show("Playback Error", "No API key configured. Set one in settings.", NotificationSeverity.Error);
                 SetState(PlaybackState.Error, "No API key available");
                 return;
             }
@@ -196,10 +195,22 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             var jsonUrl = $"{baseUrl}/api/v3/Playlist/Generate?playlist={parsed.PlaylistId}&include=MediaInfo&apikey={apiKey}";
             _playlistItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
 
-            // If null due to 401, prompt for credentials and retry once
-            if (_playlistItems is null && _apiClient.LastResponseWasUnauthorized == true && parsed.ServerBaseUrl is not null)
+            // If null due to 401, invalidate stored key, re-prompt, and retry once
+            if (_playlistItems is null && _apiClient.LastResponseWasUnauthorized == true && baseUrl is not null)
             {
-                var newKey = await ResolveCredentialsAsync(parsed.ServerBaseUrl);
+                var badRouteKey = RouteResolver.ExtractRouteKey(baseUrl);
+                if (badRouteKey is not null)
+                {
+                    var badConn = SettingsProvider.Instance.Settings.GetConnectionByRouteKey(badRouteKey);
+                    if (badConn is not null)
+                    {
+                        Logger.Info("Clearing stored API key for '{Name}' (401 on playlist fetch)", badConn.Name);
+                        badConn.ApiKey = null;
+                        SettingsProvider.Instance.Save();
+                    }
+                }
+
+                var newKey = await ResolveCredentialsAsync(baseUrl);
                 if (newKey is not null)
                 {
                     _apiClient.SetApiKey(newKey);
@@ -336,7 +347,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 return;
             }
 
-            var apiKey = await ResolveCredentialsAsync(parsed.ServerBaseUrl);
+            var apiKey = await ResolveCredentialsAsync(baseUrl);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 SetState(previousState);
@@ -349,6 +360,30 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // Fetch playlist metadata for scrobbling
             var jsonUrl = $"{baseUrl}/api/v3/Playlist/Generate?playlist={parsed.PlaylistId}&include=MediaInfo&apikey={apiKey}";
             var newItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+
+            // If null due to 401, invalidate stored key, re-prompt, and retry once
+            if (newItems is null && _apiClient.LastResponseWasUnauthorized == true && baseUrl is not null)
+            {
+                var badRouteKey = RouteResolver.ExtractRouteKey(baseUrl);
+                if (badRouteKey is not null)
+                {
+                    var badConn = SettingsProvider.Instance.Settings.GetConnectionByRouteKey(badRouteKey);
+                    if (badConn is not null)
+                    {
+                        Logger.Info("Clearing stored API key for '{Name}' (401 on playlist fetch)", badConn.Name);
+                        badConn.ApiKey = null;
+                        SettingsProvider.Instance.Save();
+                    }
+                }
+
+                var newKey = await ResolveCredentialsAsync(baseUrl);
+                if (newKey is not null)
+                {
+                    _apiClient.SetApiKey(newKey);
+                    apiKey = newKey;
+                    newItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+                }
+            }
 
             if (newItems is null || newItems.Count == 0)
             {

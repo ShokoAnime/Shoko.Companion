@@ -39,11 +39,6 @@ public class ParsedShokoUrl
     public string? ServerBaseUrl { get; init; }
 
     /// <summary>
-    /// API key extracted from the URL, resolved from the connection, or null.
-    /// </summary>
-    public string? ApiKey { get; init; }
-
-    /// <summary>
     /// Playlist identifier (e.g. <c>s1234</c> or <c>e99</c>).
     /// Present for <see cref="ShokoUrlAction.Play"/>.
     /// </summary>
