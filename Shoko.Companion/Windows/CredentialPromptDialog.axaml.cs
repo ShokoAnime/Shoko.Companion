@@ -1,7 +1,5 @@
-using System;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Shoko.Companion.Configuration;
 using Shoko.Companion.Server;
 
 namespace Shoko.Companion.Windows;

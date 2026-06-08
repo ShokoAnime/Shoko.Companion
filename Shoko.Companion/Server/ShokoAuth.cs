@@ -32,7 +32,7 @@ public static class ShokoAuth
         try
         {
             using var http = new HttpClient { Timeout = LoginTimeout };
-            var body = JsonConvert.SerializeObject(new AuthRequest
+            var body = JsonConvert.SerializeObject(new AuthRequestDto
             {
                 User = username,
                 Pass = password,
@@ -45,7 +45,7 @@ public static class ShokoAuth
                 return new AuthAttemptResult(null, (int)resp.StatusCode, null);
 
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var authResp = JsonConvert.DeserializeObject<AuthResponse>(json);
+            var authResp = JsonConvert.DeserializeObject<AuthResponseDto>(json);
             return new AuthAttemptResult(authResp?.ApiKey, (int)resp.StatusCode, null);
         }
         catch (Exception ex)

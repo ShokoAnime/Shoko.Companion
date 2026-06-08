@@ -31,7 +31,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     // ── Mpv property names (used in both observation and event dispatch) ────
     private const string MpvPropTimePos = "time-pos";
     private const string MpvPropPause = "pause";
-    private const string MpvPropDuration = "duration";
     private const string MpvPropPath = "path";
     private const string MpvPropEofReached = "eof-reached";
     private const string MpvPropIdleActive = "idle-active";
@@ -227,6 +226,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             }
 
             CacheMediaInfo(_playlistItems);
+            _pendingPlaylistEntries = _playlistItems.Count;
 
             // Read metadata from first item
             var firstItem = _playlistItems[0];
@@ -237,8 +237,14 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 SetState(PlaybackState.Error, "No files in playlist");
                 return;
             }
+
+            // Use Shoko API duration (TimeSpan) as the canonical source; mpv's duration
+            // (seconds via observed property) is used as a fallback for subsequent files.
+            _duration = firstFile.Duration.TotalMilliseconds;
+
             var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
             _streamMetadata = await ParseM3u8Async(m3u8Url);
+            EnrichStreamMetadataFromPlaylist(_playlistItems, _streamMetadata);
             _streamInitPhase = true;
 
             // Pre-fetch first file's user data for resume
@@ -297,12 +303,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // so we don't miss the initial "path" change event
             await _mpv.ObservePropertyAsync(1, MpvPropTimePos);
             await _mpv.ObservePropertyAsync(2, MpvPropPause);
-            await _mpv.ObservePropertyAsync(3, MpvPropDuration);
-            await _mpv.ObservePropertyAsync(4, MpvPropPath);
-            await _mpv.ObservePropertyAsync(5, MpvPropEofReached);
-            await _mpv.ObservePropertyAsync(6, MpvPropIdleActive);
-            await _mpv.ObservePropertyAsync(7, MpvPropAid);
-            await _mpv.ObservePropertyAsync(8, MpvPropSid);
+            await _mpv.ObservePropertyAsync(3, MpvPropPath);
+            await _mpv.ObservePropertyAsync(4, MpvPropEofReached);
+            await _mpv.ObservePropertyAsync(5, MpvPropIdleActive);
+            await _mpv.ObservePropertyAsync(6, MpvPropAid);
+            await _mpv.ObservePropertyAsync(7, MpvPropSid);
 
             // Load the m3u8 URL into mpv
             await _mpv.LoadFileAsync(m3u8Url);
@@ -403,6 +408,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             foreach (var kvp in newMetadata)
                 _streamMetadata[kvp.Key] = kvp.Value;
 
+            EnrichStreamMetadataFromPlaylist(newItems, _streamMetadata);
+
             // Append to mpv playlist
             await _mpv.AppendFileAsync(m3u8Url);
             _pendingPlaylistEntries++;
@@ -476,19 +483,21 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
             case MpvPropPause:
                 var isPaused = args.Data is true;
-                _sessionManager.OnPauseChanged(isPaused);
-                // Only transition playback state when the session is active;
-                // initial property observations before StartSession (e.g. --pause at launch)
-                // must not flip _state from Loading to Paused.
-                if (_sessionManager.HasActiveSession)
-                    SetState(isPaused ? PlaybackState.Paused : PlaybackState.Playing);
-                break;
-
-            case MpvPropDuration:
-                if (args.Data is double dur)
-                    _duration = dur;
-                else if (args.Data is long ldur)
-                    _duration = ldur;
+                if (isPaused && _pendingPlaylistEntries == 1
+                    && (_sessionManager.HasReachedEof
+                        || (_duration > 0 && _sessionManager.CurrentPositionMs > 0
+                            && (_duration - _sessionManager.CurrentPositionMs) < 300)))
+                {
+                    Logger.Info("End-of-file pause detected (pos={Pos:F0}, dur={Dur:F0}) — stopping",
+                        _sessionManager.CurrentPositionMs, _duration);
+                    _ = StopAsync();
+                }
+                else
+                {
+                    _sessionManager.OnPauseChanged(isPaused);
+                    if (_sessionManager.HasActiveSession)
+                        SetState(isPaused ? PlaybackState.Paused : PlaybackState.Playing);
+                }
                 break;
 
             case MpvPropPath:
@@ -531,6 +540,14 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         // Entering a new file — suppress treating default track selections as user changes
         _streamInitPhase = true;
 
+        // Update duration from API data for this file
+        var fileDuration = _playlistItems?
+            .SelectMany(i => i.Parts)
+            .FirstOrDefault(p => p.ID == fileId)
+            ?.Duration.TotalMilliseconds;
+        if (fileDuration is > 0)
+            _duration = fileDuration.Value;
+
         if (_streamMetadata.TryGetValue(fileId, out var meta))
         {
             var isRestricted = meta.IsRestricted;
@@ -543,11 +560,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 // Track switch mid-playlist — update metadata without ending session
                 var epName = meta.EpisodeName;
                 if (epName is null && _playlistItems?.FirstOrDefault()?.Episode is { } ep)
-                    epName = ep.Name;
+                    epName = ep.Title;
 
+                var nextEpIds = new PlaylistEpisodeIDsDto
+                {
+                    TmdbShow = meta.TmdbShow,
+                    TmdbMovie = meta.TmdbMovie,
+                    TvdbShow = meta.TvdbShow,
+                    ImdbMovie = meta.ImdbMovie,
+                };
                 _sessionManager.OnNextFile(fileId, 0, _duration, isRestricted,
                     meta.AnimeName, epName, meta.EpisodeNumber, 0, meta.EpisodeCount,
-                    meta.PosterUrl, meta.AnimeId);
+                    meta.PosterUrl, meta.AnimeId, nextEpIds);
             }
         }
         else
@@ -732,12 +756,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                         var animeId = meta?.AnimeId ?? 0;
 
                         if (episodeTitle is null && _playlistItems?.FirstOrDefault()?.Episode is { } ep)
-                            episodeTitle = ep.Name;
+                            episodeTitle = ep.Title;
 
+                        var epIds = _playlistItems?.FirstOrDefault()?.Episode?.IDs;
                         _sessionManager.StartSession(
                             fileId.Value, resumeMs, _duration, isRestricted,
                             seriesTitle, episodeTitle, epNumber, 0, epCount,
-                            posterUrl, animeId
+                            posterUrl, animeId, epIds
                         );
 
                         _sessionFileId = null;
@@ -754,6 +779,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 if (SettingsProvider.Instance.Settings.MpvFullScreen)
                     await _mpv.SetPropertyAsync("fullscreen", true);
                 await _mpv.SetPropertyAsync(MpvPropPause, false);
+                break;
+
+            case "seek":
+                if (args.Data is Newtonsoft.Json.Linq.JObject seekData
+                    && seekData.TryGetValue("time", out var timeToken)
+                    && timeToken.Type == Newtonsoft.Json.Linq.JTokenType.Float)
+                {
+                    _sessionManager.OnSeek((double)timeToken * 1000);
+                }
                 break;
 
             case "end-file":
@@ -792,14 +826,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         if (!SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
             return;
 
-        TimeSpan? position = e.PositionMs > 0 ? TimeSpan.FromMilliseconds(e.PositionMs) : null;
-
         try
         {
-            var ok = await _apiClient.ScrobbleAsync(e.FileId, e.EventType, position, e.Watched);
+            var ok = await _apiClient.ScrobbleAsync(e.FileId, e.EventType, e.Position, e.IsWatched);
             if (ok)
                 Logger.Debug("Scrobble {Event} for file {File}: pos={Pos}, watched={Watched}",
-                    e.EventType, e.FileId, position, e.Watched);
+                    e.EventType, e.FileId, e.Position, e.IsWatched);
             else
                 Logger.Warn("Scrobble {Event} for file {File} returned non-success",
                     e.EventType, e.FileId);
@@ -810,17 +842,20 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         }
 
         // On stop, persist stream selections (and position) to user data
-        if (e.PersistUserData &&
-            (e.AudioStreamId is not null || e.SubtitleStreamId is not null || e.VideoStreamId is not null))
+        if (e.PersistUserData && (e.AudioStreamId is not null || e.SubtitleStreamId is not null || e.VideoStreamId is not null))
         {
             try
             {
+                var userData = await _apiClient.FetchFileUserDataAsync(e.FileId);
                 await _apiClient.PutFileUserDataAsync(e.FileId, new VideoUserDataDto
                 {
-                    ProgressPosition = position,
+                    ProgressPosition = userData?.ProgressPosition,
+                    LastWatchedAt = userData?.LastWatchedAt,
+                    WatchedCount = userData?.WatchedCount ?? 0,
+                    LastUpdatedAt = userData?.LastUpdatedAt ?? DateTime.Now,
                     LastVideoStreamIndex = e.VideoStreamId,
                     LastAudioStreamIndex = e.AudioStreamId,
-                    LastSubtitleStreamIndex = e.SubtitleStreamId
+                    LastSubtitleStreamIndex = e.SubtitleStreamId,
                 });
                 Logger.Debug("Persisted stream selections for file {File}: a={A}, s={S}, v={V}",
                     e.FileId, e.AudioStreamId, e.SubtitleStreamId, e.VideoStreamId);
@@ -1110,6 +1145,27 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         return null;
     }
 
+    private static void EnrichStreamMetadataFromPlaylist(
+        List<PlaylistItemDto> items, Dictionary<int, StreamMetadata> metadata)
+    {
+        foreach (var item in items)
+        {
+            var epIds = item.Episode.IDs;
+            foreach (var part in item.Parts)
+            {
+                if (!metadata.TryGetValue(part.ID, out var existing)) continue;
+
+                metadata[part.ID] = existing with
+                {
+                    TmdbShow = epIds.TmdbShow,
+                    TmdbMovie = epIds.TmdbMovie,
+                    TvdbShow = epIds.TvdbShow,
+                    ImdbMovie = epIds.ImdbMovie
+                };
+            }
+        }
+    }
+
     [GeneratedRegex(@"/File/(\d+)/Stream", RegexOptions.IgnoreCase)]
     private static partial Regex FileIdRegex();
 
@@ -1121,5 +1177,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         int EpisodeCount,
         string? PosterUrl,
         int AnimeId,
-        bool IsRestricted);
+        bool IsRestricted,
+        int? TmdbShow = null,
+        int? TmdbMovie = null,
+        int? TvdbShow = null,
+        string? ImdbMovie = null);
 }

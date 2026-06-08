@@ -14,37 +14,20 @@ public class PlaylistDtoTests
             {
                 "Episode": {
                     "IDs": {
-                        "ParentSeries": 10,
-                        "AniDB": 5000,
-                        "TvDB": [11704219],
-                        "IMDB": [],
-                        "TMDB": {
-                            "Episode": [7123783],
-                            "Movie": [],
-                            "Show": [288551]
-                        },
-                        "ID": 100
+                        "AnidbEpisode": 100,
+                        "AnidbAnime": 10,
+                        "ShokoEpisode": 999,
+                        "ShokoSeries": 888,
+                        "TmdbShow": 288551,
+                        "TmdbMovie": null,
+                        "TvdbShow": 11704219,
+                        "ImdbMovie": null
                     },
-                    "HasCustomName": false,
-                    "Description": "",
-                    "IsFavorite": false,
-                    "Images": {
-                        "Posters": [],
-                        "Backdrops": [],
-                        "Banners": [],
-                        "Logos": [],
-                        "Discs": []
-                    },
-                    "Duration": "00:23:40.0630000",
-                    "ResumePosition": null,
-                    "WatchCount": 0,
-                    "IsHidden": false,
-                    "UserRating": null,
-                    "Watched": null,
-                    "Created": "2026-05-19T14:57:22.4888591Z",
-                    "Updated": "2026-05-19T14:57:22.4888591Z",
-                    "Name": "Episode 1",
-                    "Size": 1
+                    "Title": "Episode 1",
+                    "Number": 1,
+                    "Type": "Episode",
+                    "Size": 1,
+                    "SeriesTitle": "My Series"
                 },
                 "AdditionalEpisodes": [],
                 "Parts": [
@@ -94,18 +77,17 @@ public class PlaylistDtoTests
         Assert.Single(item.Parts);
 
         var ep = item.Episode!;
-        Assert.Equal("Episode 1", ep.Name);
+        Assert.Equal("Episode 1", ep.Title);
+        Assert.Equal(1, ep.Number);
+        Assert.Equal("My Series", ep.SeriesTitle);
         Assert.NotNull(ep.IDs);
-        Assert.Equal(100, ep.IDs.ID);
-        Assert.Equal(5000, ep.IDs.AniDB);
-        Assert.Equal(10, ep.IDs.ParentSeries);
-        Assert.Single(ep.IDs.TvDB);
-        Assert.Empty(ep.IDs.IMDB);
-        Assert.NotNull(ep.IDs.TMDB);
-        Assert.Single(ep.IDs.TMDB!.Episode);
-        Assert.Empty(ep.IDs.TMDB.Movie);
-        Assert.Single(ep.IDs.TMDB.Show);
-        Assert.Equal(23, ep.Duration.Minutes);
+        Assert.Equal(100, ep.IDs.AnidbEpisode);
+        Assert.Equal(10, ep.IDs.AnidbAnime);
+        Assert.Equal(999, ep.IDs.ShokoEpisode);
+        Assert.Equal(288551, ep.IDs.TmdbShow);
+        Assert.Null(ep.IDs.TmdbMovie);
+        Assert.Equal(11704219, ep.IDs.TvdbShow);
+        Assert.Null(ep.IDs.ImdbMovie);
 
         var file = item.Parts[0];
         Assert.Equal(42, file.ID);

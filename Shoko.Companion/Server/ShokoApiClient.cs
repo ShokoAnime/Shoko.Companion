@@ -48,7 +48,7 @@ public class ShokoApiClient : IShokoApiClient
     public async Task<bool> AuthenticateAsync(string username, string password, string device,
         CancellationToken ct = default)
     {
-        var request = new AuthRequest
+        var request = new AuthRequestDto
         {
             User = username,
             Pass = password,
@@ -69,7 +69,7 @@ public class ShokoApiClient : IShokoApiClient
             }
 
             var responseJson = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var authResponse = JsonConvert.DeserializeObject<AuthResponse>(responseJson);
+            var authResponse = JsonConvert.DeserializeObject<AuthResponseDto>(responseJson);
 
             if (authResponse?.ApiKey is { Length: > 0 })
             {

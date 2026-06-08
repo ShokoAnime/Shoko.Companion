@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using Newtonsoft.Json;
 
@@ -78,7 +79,17 @@ public class CompanionSettings
     public bool DiscordIdlePresence { get; set; }
 
     /// <summary>
-    /// When enabled, hides the anime title and poster image from Discord presence.
+    /// Source for Discord Rich Presence button 1. Defaults to AniDB.
+    /// </summary>
+    public Discord.DiscordButtonSource DiscordButton1 { get; set; } = Discord.DiscordButtonSource.AniDB;
+
+    /// <summary>
+    /// Source for Discord Rich Presence button 2. Defaults to disabled.
+    /// </summary>
+    public Discord.DiscordButtonSource DiscordButton2 { get; set; } = Discord.DiscordButtonSource.Disabled;
+
+    /// <summary>
+    /// When true, hides the anime title and poster image from Discord presence.
     /// Shows generic "Watching Anime" with episode info only.
     /// </summary>
     public bool DiscordPrivacyMode { get; set; }
@@ -113,27 +124,18 @@ public class CompanionSettings
     public bool MpvFullScreen { get; set; } = true;
 
     /// <summary>
-    /// Interval (in milliseconds) between scrobble position updates.
-    /// </summary>
-    public int ScrobbleIntervalMs { get; set; } = 10_000;
-
-    /// <summary>
     /// Number of initial non-pause playback events to skip after starting,
     /// to let the player settle before sending scrobbles.
     /// </summary>
     public int SyncUserDataInitialSkipEventCount { get; set; } = 3;
 
     /// <summary>
-    /// Number of non-pause position events to accumulate before sending a
-    /// live progress scrobble. Higher values reduce server load.
+    /// Number of 10s timer ticks to accumulate before sending a live progress
+    /// scrobble during smooth playback (no seeks). Higher values = fewer
+    /// requests. Default 6 = one scrobble per 60 seconds.
     /// </summary>
-    public int SyncUserDataLiveScrobbleTickThreshold { get; set; } = 3;
-
-    /// <summary>
-    /// Minimum position change (in ms) required to trigger a live scrobble.
-    /// Prevents redundant scrobbles when playback is paused or stalled.
-    /// </summary>
-    public int SyncUserDataLivePositionThresholdMs { get; set; } = 5_000;
+    [Range(1, 60)]
+    public int SyncUserDataLiveScrobbleTickThreshold { get; set; } = 6;
 
     /// <summary>
     /// When true, skips syncing for restricted (adult) content.
