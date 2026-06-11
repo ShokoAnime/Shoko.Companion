@@ -36,6 +36,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private const string MpvPropIdleActive = "idle-active";
     private const string MpvPropAid = "aid";
     private const string MpvPropSid = "sid";
+    private const string MpvPropVolume = "volume";
 
     // ── Thresholds ──────────────────────────────────────────────────────
     private const double MinResumeSeconds = 5;
@@ -308,6 +309,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             await _mpv.ObservePropertyAsync(5, MpvPropIdleActive);
             await _mpv.ObservePropertyAsync(6, MpvPropAid);
             await _mpv.ObservePropertyAsync(7, MpvPropSid);
+            await _mpv.ObservePropertyAsync(8, MpvPropVolume);
 
             // Load the m3u8 URL into mpv
             await _mpv.LoadFileAsync(m3u8Url);
@@ -524,6 +526,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
             case MpvPropSid:
                 HandleTrackChanged(StreamKind.Subtitle, args.Data);
+                break;
+
+            case MpvPropVolume:
+                if (args.Data is long v)
+                    PersistVolume((int)v);
                 break;
         }
     }
@@ -778,6 +785,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 // Configure display
                 if (SettingsProvider.Instance.Settings.MpvFullScreen)
                     await _mpv.SetPropertyAsync("fullscreen", true);
+                var savedVolume = SettingsProvider.Instance.Settings.Volume;
+                if (SettingsProvider.Instance.Settings.RestoreVolume && savedVolume.HasValue)
+                    await _mpv.SetPropertyAsync(MpvPropVolume, savedVolume.Value);
                 await _mpv.SetPropertyAsync(MpvPropPause, false);
                 break;
 
@@ -819,6 +829,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         {
             await StopAsync();
         }
+    }
+
+    private void PersistVolume(int volume)
+    {
+        if (!SettingsProvider.Instance.Settings.RestoreVolume)
+            return;
+
+        SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, 100);
+        SettingsProvider.Instance.Save();
     }
 
     private async void OnSessionScrobbleRequested(object? sender, ScrobbleRequestEventArgs e)

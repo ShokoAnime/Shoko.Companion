@@ -124,6 +124,20 @@ public class CompanionSettings
     public bool MpvFullScreen { get; set; } = true;
 
     /// <summary>
+    /// When true, the volume level is persisted between sessions and restored
+    /// on each playback start. When false, mpv's own volume configuration
+    /// (mpv.conf / per-user config) is left untouched.
+    /// </summary>
+    public bool RestoreVolume { get; set; }
+
+    /// <summary>
+    /// The saved volume level (0–100), or null if never set. Only applied
+    /// when <see cref="RestoreVolume"/> is true and this has a value.
+    /// </summary>
+    [Range(0, 100)]
+    public int? Volume { get; set; }
+
+    /// <summary>
     /// Number of initial non-pause playback events to skip after starting,
     /// to let the player settle before sending scrobbles.
     /// </summary>

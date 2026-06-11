@@ -211,6 +211,8 @@ public partial class MainWindow : Window
 
         MpvFullScreenCheck.IsChecked = s.MpvFullScreen;
 
+        RestoreVolumeCheck.IsChecked = s.RestoreVolume;
+
         OnNewUrlCombo.SelectedIndex = s.OnNewUrlAction switch
         {
             OnNewUrlBehavior.Replace => 0,
@@ -315,6 +317,8 @@ public partial class MainWindow : Window
         s.LivePlaybackSyncingEnabled = LivePlaybackSyncingCheck.IsChecked == true;
         s.SkipRestrictedContent = SkipRestrictedCheck.IsChecked == true;
         s.AlwaysUseConfiguredRoutes = AlwaysUseRoutesCheck.IsChecked == true;
+
+        s.RestoreVolume = RestoreVolumeCheck.IsChecked == true;
 
         if (LogLevelCombo.SelectedItem is ComboBoxItem item && item.Content is string level)
             s.LogLevel = level;

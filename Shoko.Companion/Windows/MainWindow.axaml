@@ -73,6 +73,9 @@
                 <CheckBox Name="MpvFullScreenCheck" Content="Start in full screen"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 
+                <CheckBox Name="RestoreVolumeCheck" Content="Remember volume between sessions"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
                 <TextBlock Text="When a new URL arrives:" FontWeight="SemiBold"/>
                 <ComboBox Name="OnNewUrlCombo"
                           HorizontalAlignment="Stretch"
