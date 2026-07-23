@@ -75,6 +75,19 @@ public class SettingsProvider
                     if (string.IsNullOrWhiteSpace(conn.Name) && conn.Routes.Count > 0)
                         conn.Name = conn.Routes[0].BaseUrl.Split('/')[0];
                 }
+
+                // Assign IDs to connections that don't have one (upgrade from older settings)
+                var needsSave = false;
+                foreach (var conn in Settings.Connections)
+                {
+                    if (conn.Id == Guid.Empty)
+                    {
+                        conn.Id = Guid.NewGuid();
+                        needsSave = true;
+                    }
+                }
+                if (needsSave)
+                    Save();
             }
         }
         catch (Exception ex)

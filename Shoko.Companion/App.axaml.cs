@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -14,6 +15,7 @@ using Shoko.Companion.Configuration;
 using Shoko.Companion.Launch;
 using Shoko.Companion.Notifications;
 using Shoko.Companion.Playback;
+using Shoko.Companion.Server;
 using Shoko.Companion.Windows;
 
 namespace Shoko.Companion;
@@ -30,6 +32,10 @@ public partial class App : Application
     private IPlaybackCoordinator? _coordinator;
     private NativeMenuItem? _discordMenuItem;
     private NativeMenuItem? _openWebUiMenuItem;
+    /// <summary>
+    /// Gets the current Media Session client, or null if not connected.
+    /// </summary>
+    public MediaSessionClient? MediaSessionClient { get; private set; }
 
     /// <summary>
     /// Loads the Avalonia XAML for the application.
@@ -59,6 +65,30 @@ public partial class App : Application
         // Start the playback coordinator (wires up all services)
         _coordinator = new PlaybackCoordinator();
         _coordinator.StateChanged += OnPlaybackStateChanged;
+        _coordinator.StateChanged += OnCoordinatorStateChanged;
+
+        // Auto-connect Media Session if configured
+        var autoConnectId = SettingsProvider.Instance.Settings.MediaSessionAutoConnectId;
+        if (autoConnectId.HasValue && autoConnectId.Value != Guid.Empty)
+        {
+            var autoConn = SettingsProvider.Instance.Settings.Connections
+                .FirstOrDefault(c => c.Id == autoConnectId.Value && c.ApiKey is { Length: > 0 });
+            if (autoConn is not null)
+            {
+                var reachableUrl = autoConn.ProbeReachableBaseUrl();
+                if (reachableUrl is not null)
+                {
+                    // Start the connection in the background
+                    var capturedUrl = reachableUrl;
+                    var capturedKey = autoConn.ApiKey!;
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(1000); // Let the app settle
+                        await ConnectMediaSessionAsync(capturedUrl, capturedKey);
+                    });
+                }
+            }
+        }
 
         // If we were launched with a URL (from CLI or single-instance forwarding),
         // dispatch it through the same action router as post-startup URLs.
@@ -435,6 +465,69 @@ public partial class App : Application
         });
     }
 
+    private void OnCoordinatorStateChanged(object? sender, PlaybackStateChangedEventArgs args)
+    {
+        if (MediaSessionClient?.IsConnected != true)
+            return;
+
+        var state = args.NewState switch
+        {
+            PlaybackState.Playing => "Playing",
+            PlaybackState.Paused => "Paused",
+            PlaybackState.Idle => "Idle",
+            PlaybackState.Stopped => "Stopped",
+            PlaybackState.Loading => "Loading",
+            PlaybackState.Error => "Error",
+            _ => "Idle",
+        };
+
+        _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
+        {
+            State = state,
+            FileId = _coordinator!.CurrentFileId,
+            VideoId = _coordinator!.CurrentFileId,
+            Title = _coordinator!.CurrentTitle,
+            Position = TimeSpan.FromSeconds(_coordinator!.CurrentPositionSeconds),
+            Duration = _coordinator!.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value) : null,
+            StreamUrl = _coordinator!.CurrentStreamUrl,
+            IsPaused = args.NewState == PlaybackState.Paused,
+        });
+    }
+
+    /// <summary>
+    /// Connect to the Media Session hub for the given server.
+    /// </summary>
+    public async Task ConnectMediaSessionAsync(string baseUrl, string apiKey)
+    {
+        if (MediaSessionClient is not null)
+            await DisconnectMediaSessionAsync();
+
+        MediaSessionClient = new MediaSessionClient(baseUrl, apiKey, DeviceInfo.DeviceName, _coordinator!);
+
+        var available = await MediaSessionClient.IsPluginAvailableAsync(baseUrl, apiKey);
+        if (available)
+        {
+            Logger.Info("Media Session plugin available, connecting to {Url}", baseUrl);
+            await MediaSessionClient.ConnectAsync();
+        }
+        else
+        {
+            Logger.Warn("Media Session plugin not available at {Url}", baseUrl);
+        }
+    }
+
+    /// <summary>
+    /// Disconnect from the Media Session hub.
+    /// </summary>
+    public async Task DisconnectMediaSessionAsync()
+    {
+        if (MediaSessionClient is not null)
+        {
+            await MediaSessionClient.DisposeAsync();
+            MediaSessionClient = null;
+        }
+    }
+
     private void OnConsoleOnCancelKeyPress(object? sender, ConsoleCancelEventArgs args)
     {
         args.Cancel = true;
@@ -443,6 +536,9 @@ public partial class App : Application
 
     private async void DispatchShutdown()
     {
+        if (MediaSessionClient is not null)
+            await MediaSessionClient.DisposeAsync();
+
         if (_coordinator is not null)
             await _coordinator.StopAsync();
 

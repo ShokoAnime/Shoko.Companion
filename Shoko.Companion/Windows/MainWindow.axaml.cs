@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using NLog;
 using Shoko.Companion.Configuration;
 using Shoko.Companion.Mpv;
+using Shoko.Companion.Server;
 #if DEBUG
 using Shoko.Companion.Discord;
 using Shoko.Companion.Notifications;
@@ -24,6 +27,9 @@ public partial class MainWindow : Window
     private static readonly string[] LogLevelValues = ["Trace", "Debug", "Info", "Warn", "Error"];
     private readonly ObservableCollection<ServerConnection> _connections;
     private bool _loadingSettings;
+
+    // Track media session connection state
+    private bool _mediaSessionConnected;
 
     /// <summary>
     /// Creates the window, loads current settings, and (in DEBUG builds) adds
@@ -229,6 +235,8 @@ public partial class MainWindow : Window
         var levelIndex = Array.IndexOf(LogLevelValues, s.LogLevel);
         LogLevelCombo.SelectedIndex = levelIndex >= 0 ? levelIndex : 2; // default to "Info"
 
+        LoadMediaSessionSection();
+
         _loadingSettings = false;
     }
 
@@ -323,6 +331,12 @@ public partial class MainWindow : Window
         if (LogLevelCombo.SelectedItem is ComboBoxItem item && item.Content is string level)
             s.LogLevel = level;
 
+        // Media Session auto-connect
+        if (MediaSessionConnectionCombo.SelectedItem is MediaSessionConnectionItem msItem && msItem.Id != Guid.Empty)
+            s.MediaSessionAutoConnectId = msItem.Id;
+        else
+            s.MediaSessionAutoConnectId = null;
+
         SettingsProvider.Instance.Save();
     }
 
@@ -331,4 +345,118 @@ public partial class MainWindow : Window
         var dialog = new ManageFoldersDialog();
         dialog.ShowDialog(this);
     }
+
+    private void LoadMediaSessionSection()
+    {
+        var s = SettingsProvider.Instance.Settings;
+        var items = new List<MediaSessionConnectionItem>
+        {
+            new() { Display = "(None)", Id = Guid.Empty }
+        };
+        items.AddRange(s.Connections.Select(c => new MediaSessionConnectionItem
+        {
+            Display = c.Name,
+            Id = c.Id,
+        }));
+
+        MediaSessionConnectionCombo.ItemsSource = items;
+
+        if (s.MediaSessionAutoConnectId.HasValue && s.MediaSessionAutoConnectId.Value != Guid.Empty)
+        {
+            var match = items.FirstOrDefault(i => i.Id == s.MediaSessionAutoConnectId.Value);
+            if (match is not null)
+                MediaSessionConnectionCombo.SelectedItem = match;
+            else
+                MediaSessionConnectionCombo.SelectedItem = items[0];
+        }
+        else
+        {
+            MediaSessionConnectionCombo.SelectedItem = items[0];
+        }
+
+        UpdateMediaSessionState();
+    }
+
+    private void UpdateMediaSessionState()
+    {
+        var app = Avalonia.Application.Current as App;
+        var connected = app?.MediaSessionClient?.IsConnected == true;
+        _mediaSessionConnected = connected;
+
+        MediaSessionStatusText.Text = connected
+            ? $"Connected - {app?.MediaSessionClient?.SessionName ?? "Unknown"}"
+            : "Not connected";
+        MediaSessionStatusText.Foreground = connected
+            ? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Green)
+            : new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Gray);
+
+        ConnectMediaSessionButton.IsEnabled = !connected;
+        DisconnectMediaSessionButton.IsEnabled = connected;
+    }
+
+    private async void OnConnectMediaSessionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var selected = MediaSessionConnectionCombo.SelectedItem as MediaSessionConnectionItem;
+        if (selected is null || selected.Id == Guid.Empty)
+            return;
+
+        var conn = SettingsProvider.Instance.Settings.Connections
+            .FirstOrDefault(c => c.Id == selected.Id && c.ApiKey is { Length: > 0 });
+        if (conn is null)
+        {
+            MediaSessionStatusText.Text = "Connection has no API key. Edit the connection and log in first.";
+            MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Red);
+            return;
+        }
+
+        var reachableUrl = conn.ProbeReachableBaseUrl();
+        if (reachableUrl is null)
+        {
+            MediaSessionStatusText.Text = $"Could not reach {conn.Name}. Check the route.";
+            MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Red);
+            return;
+        }
+
+        var app = Avalonia.Application.Current as App;
+        if (app is null) return;
+
+        MediaSessionStatusText.Text = "Checking plugin availability...";
+        MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Gray);
+
+        var available = await MediaSessionClient.IsPluginAvailableAsync(reachableUrl, conn.ApiKey!);
+        if (!available)
+        {
+            MediaSessionStatusText.Text = "Media Session plugin not available on this server.";
+            MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Red);
+            return;
+        }
+
+        await app.ConnectMediaSessionAsync(reachableUrl, conn.ApiKey!);
+        UpdateMediaSessionState();
+    }
+
+    private async void OnDisconnectMediaSessionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var app = Avalonia.Application.Current as App;
+        if (app is null) return;
+
+        await app.DisconnectMediaSessionAsync();
+        UpdateMediaSessionState();
+    }
+
+    private void OnRefreshMediaSessionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        LoadMediaSessionSection();
+    }
+}
+
+/// <summary>
+/// Combo box item representing a server connection for Media Session selection.
+/// </summary>
+internal sealed class MediaSessionConnectionItem
+{
+    public string Display { get; init; } = string.Empty;
+    public Guid Id { get; init; }
+
+    public override string ToString() => Display;
 }

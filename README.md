@@ -1,6 +1,6 @@
 # Shoko Companion
 
-A lightweight, cross-platform **system-tray companion** for [Shoko Server](https://shokoanime.com/) that plays your anime in **mpv**, reports watch progress back to the server, and (optionally) shows what you're watching as **Discord Rich Presence**.
+A lightweight, cross-platform **system-tray companion** for [Shoko Server](https://shokoanime.com/) that plays your anime in **mpv**, reports watch progress back to the server, (optionally) integrates with the **Media Session** plugin for remote playback control, and (optionally) shows what you're watching as **Discord Rich Presence**.
 
 - **Binary:** `shoko-companion`
 - **Display name:** Shoko Companion
@@ -10,25 +10,22 @@ A lightweight, cross-platform **system-tray companion** for [Shoko Server](https
 
 ---
 
-## What it does
-
-1. You click **"Send to External Player"** in the Shoko Web UI (wording to be revisited). The browser opens a `shoko:` URL.
-2. The companion catches that URL, launches **mpv**, and starts playback of the generated playlist.
-3. While you watch, it **syncs playback events** to the server (resume position + watched state), mirroring the server's "watched at ≥ 97.5%" rule.
-4. It optionally drives **Discord Rich Presence** and shows **native OS notifications** for important events.
-5. It lives in the **system tray** — right-click for settings, Discord toggle, folder management, and exit.
-
----
-
 ## Features
 
-- **Plays in mpv** — catches `shoko://` URLs from the web UI, launches mpv, plays the stream.
+- **Plays in mpv** — catches `shoko://` URLs, launches mpv, plays the stream.
 - **Playback events** — periodic position updates, start/pause/resume/stop events, auto-marks watched at ≥ 97.5%.
 - **Resume support** — pre-fetches resume position and seeks mpv on file load.
-- **Server connections** — multiple connections with route fallback; auto-discovers from the first URL.
+- **Server connections** — multiple connections with route fallback; auto-discovered from  the `shoko://` URLs or manually configured.
 - **Managed folder mappings** — resolves "Open Folder" actions from the web UI to local paths.
-- **Discord Rich Presence** — shows series/episode info (optional, toggle from tray).
+- **Discord Rich Presence** — optionally shows series/episode info in Discord.
 - **Cross-platform tray app** — Windows, Linux, macOS. Native notifications.
+
+### Media Session API Support
+
+When the **Media Session** plugin is installed on the Shoko server, the companion can connect to its SignalR hub for remote playback control. This enables:
+- Other devices/clients for the user to see what's playing and send play/pause/seek/stop commands
+- Live state updates pushed via SignalR alongside REST-based scrobbling
+- Per-connection auto-connect with manual Connect/Disconnect in settings
 
 ---
 
@@ -38,7 +35,7 @@ A lightweight, cross-platform **system-tray companion** for [Shoko Server](https
 |---|---|
 | **A running Shoko Server** | v3 API reachable from this machine. |
 | **mpv** | Must be installed and discoverable (in `PATH` or a common install location). [mpv.io](https://mpv.io/installation/) |
-| **.NET 10 runtime** | Only if you run the framework-dependent build. The single-file self-contained build bundles the runtime. |
+| **.NET 10 runtime** | Only if you run the framework-dependent build. |
 | **Discord desktop client** | Only if you enable Rich Presence. |
 
 ---
@@ -77,7 +74,7 @@ Settings live in a JSON file under a per-platform config root:
 |---|---|---|
 | Windows | `%APPDATA%\shoko-companion\settings.json` |
 | macOS | `~/Library/Application Support/shoko-companion/settings.json` |
-| Linux | `$XDG_CONFIG_HOME/shoko-companion/settings.json` (falls back to `~/.config/...`) |
+| Linux | `$XDG_CONFIG_HOME/shoko-companion/settings.json` (falls back to `~/.config/shoko-companion/settings.json` if `XDG_CONFIG_HOME` is not set) |
 
 Logs are written next to it under `logs/`.
 
@@ -106,6 +103,7 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `OnNewUrlAction` | string | `"Append"` | When a new `shoko:` URL arrives while playing: `"Replace"` (stop + start new), `"Ignore"` (silently discard), or `"Append"` (add to mpv playlist). |
 | `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing (start/end/pause/resume). |
 | `LivePlaybackSyncingEnabled` | bool | `false` | Periodic position updates during playback (requires `PlaybackSyncingEnabled`). |
+| `MediaSessionAutoConnectId` | Guid | `null` | Server connection ID to auto-connect for the Media Session SignalR hub. Null disables auto-connect. |
 | `SyncUserDataInitialSkipEventCount` | int | `3` | Number of initial non-pause events to skip after starting, letting the player settle. |
 | `SyncUserDataLiveScrobbleTickThreshold` | int | `3` | Number of position events accumulated before sending a live progress update. |
 | `SyncUserDataLivePositionThresholdMs` | int | `5000` | Minimum position change (ms) required to trigger a live progress update. |

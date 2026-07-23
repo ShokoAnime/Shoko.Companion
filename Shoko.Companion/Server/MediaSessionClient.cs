@@ -1,0 +1,438 @@
+using System;
+using System.Net.Http;
+using System.Reflection;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.SignalR.Client;
+using Newtonsoft.Json;
+using NLog;
+using Shoko.Companion.Playback;
+
+namespace Shoko.Companion.Server;
+
+/// <summary>
+/// Client for the Shoko Media Session plugin's SignalR hub.
+/// Connects, registers as a companion session, relays commands to the
+/// playback coordinator, and reports playback state.
+/// </summary>
+public sealed class MediaSessionClient : IAsyncDisposable
+{
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+    private readonly string _baseUrl;
+    private readonly string _apiKey;
+    private readonly string _deviceName;
+    private readonly IPlaybackCoordinator _coordinator;
+    private HubConnection? _connection;
+    private string? _sessionId;
+
+    /// <summary>
+    /// Raised when the connection state changes.
+    /// </summary>
+    public event Action<bool>? ConnectionStateChanged;
+
+    /// <summary>
+    /// The display name of the registered session.
+    /// </summary>
+    public string SessionName => _deviceName;
+
+    /// <summary>
+    /// Whether the client is currently connected to the hub.
+    /// </summary>
+    public bool IsConnected => _connection?.State == HubConnectionState.Connected;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MediaSessionClient"/> class.
+    /// </summary>
+    /// <param name="baseUrl">The server base URL (e.g. <c>http://myserver:8111</c>).</param>
+    /// <param name="apiKey">The API key for authentication.</param>
+    /// <param name="deviceName">The device name to register with the hub.</param>
+    /// <param name="coordinator">The playback coordinator to relay commands to.</param>
+    public MediaSessionClient(
+        string baseUrl,
+        string apiKey,
+        string deviceName,
+        IPlaybackCoordinator coordinator)
+    {
+        _baseUrl = baseUrl.TrimEnd('/');
+        _apiKey = apiKey;
+        _deviceName = deviceName;
+        _coordinator = coordinator;
+    }
+
+    /// <summary>
+    /// Probe the server to check if the Media Session plugin is available.
+    /// </summary>
+    /// <param name="baseUrl">The server base URL.</param>
+    /// <param name="apiKey">The API key for authentication.</param>
+    /// <returns><c>true</c> if the plugin endpoint responds with success.</returns>
+    public static async Task<bool> IsPluginAvailableAsync(string baseUrl, string apiKey)
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var url = $"{baseUrl.TrimEnd('/')}/api/plugin/MediaSession/v1/Available";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("apikey", apiKey);
+
+            using var response = await http.SendAsync(request).ConfigureAwait(false);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Media Session plugin availability check failed");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Connect to the hub and register as a companion session.
+    /// </summary>
+    public async Task ConnectAsync()
+    {
+        if (_connection is not null)
+            await DisposeAsync();
+
+        _connection = new HubConnectionBuilder()
+            .WithUrl($"{_baseUrl}/signalr/plugin/MediaSession/v1", options =>
+            {
+                options.Headers["apikey"] = _apiKey;
+            })
+            .WithAutomaticReconnect(new RetryDelayProvider())
+            .Build();
+
+        // Wire up server-to-client methods
+        _connection.On<PlaybackRequestDto>("Play", async request =>
+        {
+            Logger.Info("MediaSession: Play command received");
+            await HandlePlayAsync(request);
+        });
+
+        _connection.On("Pause", async () =>
+        {
+            Logger.Info("MediaSession: Pause command received");
+            await _coordinator.PauseAsync();
+        });
+
+        _connection.On<TimeSpan>("Seek", async position =>
+        {
+            Logger.Info("MediaSession: Seek to {Position}", position);
+            await _coordinator.SeekAsync(position);
+        });
+
+        _connection.On("Stop", async () =>
+        {
+            Logger.Info("MediaSession: Stop command received");
+            await _coordinator.StopAsync();
+        });
+
+        _connection.Closed += async error =>
+        {
+            Logger.Warn(error, "MediaSession: Connection closed");
+            ConnectionStateChanged?.Invoke(false);
+        };
+
+        _connection.Reconnecting += _ =>
+        {
+            Logger.Info("MediaSession: Reconnecting...");
+            return Task.CompletedTask;
+        };
+
+        _connection.Reconnected += async _ =>
+        {
+            Logger.Info("MediaSession: Reconnected, re-registering...");
+            await RegisterSessionAsync();
+            ConnectionStateChanged?.Invoke(true);
+        };
+
+        try
+        {
+            await _connection.StartAsync().ConfigureAwait(false);
+            Logger.Info("MediaSession: Connected to hub");
+            await RegisterSessionAsync();
+            ConnectionStateChanged?.Invoke(true);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "MediaSession: Failed to connect");
+        }
+    }
+
+    /// <summary>
+    /// Handle a Play command from the hub.
+    /// </summary>
+    private async Task HandlePlayAsync(PlaybackRequestDto request)
+    {
+        try
+        {
+            // Construct a shoko:// URL — the coordinator handles the
+            // full resolution pipeline (playlist, mpv, scrobble).
+            var uri = new Uri(_baseUrl);
+            var shokoUrl = $"shoko://{uri.Host}:{uri.Port}/play?playlist=f{request.VideoId}";
+            await _coordinator.PlayAsync(shokoUrl, request.StartPosition);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "MediaSession: Failed to handle Play command");
+        }
+    }
+
+    /// <summary>
+    /// Register this companion as a session on the hub.
+    /// </summary>
+    private async Task RegisterSessionAsync()
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected)
+            return;
+
+        try
+        {
+            var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0.0";
+            var deviceInfo = new RegisterDeviceDto
+            {
+                Name = _deviceName,
+                ClientName = "Shoko Desktop Companion",
+                HostName = Environment.MachineName,
+                DeviceType = "Companion",
+                Platform = GetPlatform(),
+                Version = version,
+            };
+
+            var result = await _connection.InvokeAsync<SessionInfoDto>("RegisterSession", deviceInfo);
+            _sessionId = result.SessionId;
+            Logger.Info("MediaSession: Registered as session {SessionId}", _sessionId);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "MediaSession: Failed to register session");
+        }
+    }
+
+    /// <summary>
+    /// Report playback state to the hub.
+    /// </summary>
+    /// <param name="state">The current playback state to report.</param>
+    public async Task ReportStateAsync(PlaybackStateUpdateDto state)
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+            return;
+
+        try
+        {
+            await _connection.InvokeAsync("UpdateState", state);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "MediaSession: Failed to report state");
+        }
+    }
+
+    /// <summary>
+    /// Get the current platform string for device registration.
+    /// </summary>
+    private static string GetPlatform()
+    {
+        if (OperatingSystem.IsWindows()) return "windows";
+        if (OperatingSystem.IsMacOS()) return "macos";
+        if (OperatingSystem.IsLinux()) return "linux";
+        return "unknown";
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask DisposeAsync()
+    {
+        if (_connection is not null)
+        {
+            try
+            {
+                // Try to unregister before disconnecting
+                if (_connection.State == HubConnectionState.Connected && _sessionId is not null)
+                    await _connection.InvokeAsync("UnregisterSession");
+            }
+            catch
+            {
+                // Best-effort
+            }
+
+            await _connection.DisposeAsync();
+            _connection = null;
+            _sessionId = null;
+        }
+    }
+
+    // ── DTOs matching the plugin's hub contract ──
+
+    private sealed class RegisterDeviceDto
+    {
+        [JsonProperty("name")]
+        public string Name { get; init; } = string.Empty;
+
+        [JsonProperty("deviceType")]
+        public string DeviceType { get; init; } = string.Empty;
+
+        [JsonProperty("clientName")]
+        public string? ClientName { get; init; }
+
+        [JsonProperty("hostName")]
+        public string? HostName { get; init; }
+
+        [JsonProperty("platform")]
+        public string? Platform { get; init; }
+
+        [JsonProperty("version")]
+        public string? Version { get; init; }
+    }
+
+    private sealed class SessionInfoDto
+    {
+        [JsonProperty("sessionId")]
+        public string SessionId { get; init; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Reconnect delay provider: 0s, 2s, 10s, 30s, then every 60s.
+    /// </summary>
+    private sealed class RetryDelayProvider : IRetryPolicy
+    {
+        public TimeSpan? NextRetryDelay(RetryContext retryContext)
+        {
+            return retryContext.PreviousRetryCount switch
+            {
+                0 => TimeSpan.Zero,
+                1 => TimeSpan.FromSeconds(2),
+                2 => TimeSpan.FromSeconds(10),
+                3 => TimeSpan.FromSeconds(30),
+                _ => TimeSpan.FromSeconds(60),
+            };
+        }
+    }
+}
+
+/// <summary>
+/// DTO for commands from the hub, mirroring the server's PlaybackRequest.
+/// </summary>
+public sealed class PlaybackRequestDto
+{
+    /// <summary>
+    /// Shoko video ID to play. The companion resolves this to a stream URL
+    /// through the playlist/stream pipeline.
+    /// </summary>
+    [JsonProperty("videoId")]
+    public int VideoId { get; init; }
+
+    /// <summary>
+    ///   Optional. Weather to append to the current playlist, or replace it.
+    ///   Leave as <c>null</c> to leave it up to the client. Set to <c>true</c>
+    ///   to always append, <c>false</c> to always replace.
+    /// </summary>
+    [JsonProperty("append")]
+    public bool Append { get; init; }
+
+    /// <summary>
+    ///   Optional. Start position to seek to upon playing the video. The
+    ///   companion seeks to this position after loading the video.
+    /// </summary>
+    [JsonProperty("startPosition")]
+    public TimeSpan? StartPosition { get; init; }
+}
+
+/// <summary>
+/// DTO for reporting state to the hub, mirroring the server's PlaybackStateUpdate.
+/// </summary>
+public sealed class PlaybackStateUpdateDto
+{
+    /// <summary>
+    /// The playback state string (Playing, Paused, Idle, Stopped, Loading, Error).
+    /// </summary>
+    [JsonProperty("state")]
+    public string State { get; init; } = "Idle";
+
+    /// <summary>
+    /// The file ID currently being played, if any.
+    /// </summary>
+    [JsonProperty("fileId")]
+    public int? FileId { get; init; }
+
+    /// <summary>
+    /// The Shoko video ID, if managed by Shoko.
+    /// </summary>
+    [JsonProperty("videoId")]
+    public int? VideoId { get; init; }
+
+    /// <summary>
+    /// Title of the currently playing media.
+    /// </summary>
+    [JsonProperty("title")]
+    public string? Title { get; init; }
+
+    /// <summary>
+    /// Media type: "video", "audio", or "unknown".
+    /// </summary>
+    [JsonProperty("mediaType")]
+    public string? MediaType { get; init; }
+
+    /// <summary>
+    /// Thumbnail or poster URL, if available.
+    /// </summary>
+    [JsonProperty("thumbnailUrl")]
+    public string? ThumbnailUrl { get; init; }
+
+    /// <summary>
+    /// Next item in the play queue, or null if none.
+    /// </summary>
+    [JsonProperty("nextItem")]
+    public NextMediaItemInfoDto? NextItem { get; init; }
+
+    /// <summary>
+    /// The current playback position.
+    /// </summary>
+    [JsonProperty("position")]
+    public TimeSpan Position { get; init; }
+
+    /// <summary>
+    /// The total duration, if known.
+    /// </summary>
+    [JsonProperty("duration")]
+    public TimeSpan? Duration { get; init; }
+
+    /// <summary>
+    /// Whether playback is currently paused.
+    /// </summary>
+    [JsonProperty("isPaused")]
+    public bool IsPaused { get; init; }
+
+    /// <summary>
+    /// Stream URL the player is using, if known.
+    /// </summary>
+    [JsonProperty("streamUrl")]
+    public string? StreamUrl { get; init; }
+}
+
+/// <summary>
+/// DTO for the next item in the play queue, mirroring the server's NextMediaItemInfo.
+/// </summary>
+public sealed class NextMediaItemInfoDto
+{
+    /// <summary>
+    /// Human-readable title, or null if no next item.
+    /// </summary>
+    [JsonProperty("title")]
+    public string? Title { get; init; }
+
+    /// <summary>
+    /// Media type hint: "video" or "audio". Null if unknown.
+    /// </summary>
+    [JsonProperty("mediaType")]
+    public string? MediaType { get; init; }
+
+    /// <summary>
+    /// Shoko video ID, if the next item is managed by Shoko.
+    /// </summary>
+    [JsonProperty("videoId")]
+    public int? VideoId { get; init; }
+
+    /// <summary>
+    /// Thumbnail or poster URL for the next item, if available.
+    /// </summary>
+    [JsonProperty("thumbnailUrl")]
+    public string? ThumbnailUrl { get; init; }
+}

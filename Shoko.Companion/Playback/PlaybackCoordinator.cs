@@ -71,6 +71,41 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     /// </summary>
     public PlaybackState CurrentState => _state;
 
+    /// <inheritdoc/>
+    public int? CurrentFileId => _sessionManager.CurrentFileId;
+
+    /// <inheritdoc/>
+    public double CurrentPositionSeconds => _sessionManager.CurrentPositionMs / 1000.0;
+
+    /// <inheritdoc/>
+    public double? DurationSeconds => _duration > 0 ? _duration / 1000.0 : null;
+
+    /// <inheritdoc/>
+    public string? CurrentTitle
+    {
+        get
+        {
+            var fileId = _sessionManager.CurrentFileId;
+            if (fileId.HasValue && _streamMetadata.TryGetValue(fileId.Value, out var meta))
+                return meta.EpisodeName ?? meta.AnimeName;
+
+            return null;
+        }
+    }
+
+    /// <inheritdoc/>
+    public string? CurrentStreamUrl
+    {
+        get
+        {
+            var fileId = _sessionManager.CurrentFileId;
+            if (fileId.HasValue)
+                return _apiClient.BuildStreamUrl(fileId.Value);
+
+            return null;
+        }
+    }
+
     /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
@@ -125,7 +160,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     /// <summary>
     /// Play a shoko:// URL (handles m3u8 → JSON resolution, mpv launch, scrobble, etc).
     /// </summary>
-    public async Task PlayAsync(string shokoUrl)
+    public async Task PlayAsync(string shokoUrl, TimeSpan? startPosition = null, bool? append = null)
     {
         if (_state is PlaybackState.Playing or PlaybackState.Paused)
         {
@@ -470,6 +505,17 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     {
         if (_state != PlaybackState.Paused) return;
         await _mpv.SetPropertyAsync(MpvPropPause, false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SeekAsync(TimeSpan position)
+    {
+        if (_state != PlaybackState.Playing && _state != PlaybackState.Paused)
+            return;
+
+        Logger.Info("Seeking to {Position}", position);
+        await _mpv.SetPropertyAsync("time-pos", position.TotalSeconds);
+        _sessionManager.OnSeek(position.TotalMilliseconds);
     }
 
     private void OnMpvPropertyChanged(object? sender, MpvPropertyChangeEventArgs args)

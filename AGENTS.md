@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits in the system tray, receives `shoko://` URL clicks, resolves playlist metadata from the Shoko API, launches mpv with JSON IPC for playback, and scrobbles watch progress back to the server.
+Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits in the system tray, receives `shoko://` URL clicks, resolves metadata from the Shoko API, launches mpv with JSON IPC for playback, scrobbles watch progress, and integrates with the Media Session plugin for remote playback control.
 
 ## Stack
 
@@ -10,6 +10,7 @@ Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits
 - **Avalonia 11.3.12** — desktop UI framework
 - **NLog 6.1.3** — structured logging (JSONL files under `{ConfigRoot}/logs/`)
 - **Newtonsoft.Json 13** — all JSON serialization (NO System.Text.Json)
+- **Microsoft.AspNetCore.SignalR.Client 10.0** — Media Session plugin hub connection
 - **DiscordRichPresence 1.6.1.70** — Discord "Now Playing" integration
 - **xunit** — tests
 
@@ -41,17 +42,24 @@ Program.Main()
         ├── Load settings
         ├── Init tray icon
         ├── PlaybackCoordinator (wires mpv, server, discord, notifications)
+        ├── Auto-connect Media Session (if configured — probes, connects, registers)
         ├── ConsumePendingUrl → PlayAsync if forwarded URL arrived
         ├── Subscribe to SingleInstanceManager.UrlReceived (post-startup URLs)
         ├── First-run → show settings window
         └── URL scheme registration prompt (once)
 ```
 
-### Single Instance
+### Media Session API Integration
 
-- **PID lock file** at `{ConfigRoot}/.lockfile` — replaces old Named Mutex (unreliable on Linux)
-- **URL forwarding:** secondary instance writes URL via `NamedPipeClientStream`, primary listens on `NamedPipeServerStream` (backed by Unix domain sockets on Linux)
-- `UrlReceived` event fires when URL arrives at running instance
+The companion optionally integrates with the Media Session plugin via SignalR:
+
+1. **Probe**: `GET /api/plugin/MediaSession/v1/Available` to check plugin availability
+2. **Connect**: `HubConnection` to `/signalr/plugin/MediaSession/v1` with `accessTokenFactory` sending the API key as Bearer token
+3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName })`
+4. **Receive commands**: `Play`, `Pause`, `Seek`, `Stop` → relayed to `PlaybackCoordinator`
+5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds })` on coordinator state changes
+
+**Auto-connect**: configured per-server-connection via `MediaSessionAutoConnectId` (Guid). Only one connection can auto-connect. Manual Connect/Disconnect buttons in the settings window.
 
 ### Playback Flow
 
@@ -73,113 +81,36 @@ PlayAsync(shokoUrl)
 └── On eof-reached/idle → stop + final scrobble
 ```
 
-### IPC Socket Lifecycle
+### Playback Flow (via Media Session API)
 
-- Socket path: `/tmp/shoko-companion-mpv-{companionPid}.sock` on Linux
-- Stale socket deleted before launch (`LaunchAndConnectAsync`)
-- Socket deleted on mpv exit (`OnProcessExited`)
-- Socket deleted on shutdown (`StopAsync`, cleanup before flags are reset)
-
-## Models
-
-All DTOs match the **Shoko Server API v3** responses exactly.
-
-```csharp
-PlaylistItemDto
-├── Episode (EpisodeDto?)
-├── AdditionalEpisodes (List<EpisodeDto>)
-└── Parts (List<FileDto>)
-
-EpisodeDto
-├── IDs (EpisodeIdsDto)      // ID, ParentSeries, AniDB, TvDB[], IMDB[], TMDB?
-├── HasCustomName, Description, IsFavorite, IsHidden
-├── Images (ImagesDto?)       // Posters, Backdrops, Banners, Logos, Discs
-├── Duration (TimeSpan), ResumePosition (TimeSpan?)
-├── WatchCount, UserRating (object?), Watched (DateTime?), Size (int)
-├── Created, Updated
-└── Name (string)
-
-EpisodeIdsDto
-├── ID (int), ParentSeries (int), AniDB (int)
-├── TvDB (List<int>), IMDB (List<string>)
-└── TMDB (TMDBIdsDto?)
-
-TMDBIdsDto
-├── Episode (List<int>), Movie (List<int>), Show (List<int>)
-
-EpisodeTypeDto (enum)
-├── Unknown=0, Episode=1, Special=2, Credits=3
-└── Trailer=4, Parody=5, Other=6
-
-FileDto
-├── ID (int), Size (long), IsVariation, IsIgnored
-├── Hashes (List<HashDto>), Locations (List<LocationDto>)
-├── AVDump (AVDumpDto?), Resolution (string?)
-├── Duration, ResumePosition, Viewed, Watched, Imported
-└── Created, Updated
-
-HashDto
-├── Type (string?), Value (string?)
-
-LocationDto
-├── ID (int), FileID (int), ManagedFolderID (int)
-├── RelativePath (string?), IsAccessible (bool)
-
-AVDumpDto
-├── Status (string?), Progress (double?), SucceededCreqCount (int?), FailedCreqCount (int?)
-├── PendingCreqCount (int?)
-├── StartedAt (DateTime?), LastDumpedAt (DateTime?), LastVersion (string?)
-
-SeriesDto
-├── IDs (SeriesIdsDto?)
-└── Name (string?)
-
-SeriesIdsDto
-├── ID (int), AniDB (int?)
-
-ImagesDto
-├── Posters (List<object>), Backdrops (List<object>), Banners (List<object>)
-├── Logos (List<object>), Discs (List<object>)
-
-VideoUserDataDto
-├── [JsonProperty("progressPosition")] ProgressPosition (TimeSpan?)
-├── [JsonProperty("watchedCount")]     WatchedCount (int)
-├── [JsonProperty("lastWatchedAt")]    LastWatchedAt (DateTime?)
-└── [JsonProperty("lastUpdatedAt")]    LastUpdatedAt (DateTime)
-
-AuthRequest
-├── [JsonProperty("user")]   User (string)
-├── [JsonProperty("pass")]   Pass (string)
-└── [JsonProperty("device")] Device (string)
-
-AuthResponse
-└── [JsonProperty("apikey")] ApiKey (string?)
-
-ManagedFolderDto
-├── ID (int), Path (string?), Name (string?), IsEnabled (bool)
-
-ScrobbleEventType (enum)
-├── None=0, UserInteraction=1, PlaybackStart=2, PlaybackPause=3
-├── PlaybackResume=4, PlaybackProgress=5, PlaybackEnd=6, Import=7
-└── ToQueryValue() → "play" | "pause" | "resume" | "scrobble" | "stop" | "user-interaction"
-```
+When a `Play` command arrives via the SignalR hub:
+1. `MediaSessionClient.OnPlay(request)` is invoked
+2. Constructs a `shoko://` URL from `request.VideoId` and delegates to `PlaybackCoordinator.PlayAsync()`
+3. The standard playlist resolution, mpv launch, and scrobble pipeline runs as normal
 
 ## Settings
 
-Stored as JSON at `{ConfigRoot}/settings.json`. Fields:
+Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
 
-- `ServerBaseUrl`, `ApiKey` — Shoko server connection
+### Global
 - `MpvPath` — optional override for mpv binary
+- `MpvFullScreen` — launch mpv in full screen (default `true`)
 - `OnNewUrlAction` — `Replace` / `Ignore` / `Append` (default `Append`)
 - `PlaybackSyncingEnabled` — master toggle for scrobbling (default `true`)
-- `LivePlaybackSyncingEnabled` — periodic position updates (default `true`)
+- `LivePlaybackSyncingEnabled` — periodic position updates (default `false`)
 - `SkipRestrictedContent` — skip scrobbling for adult content (default `true`)
-- `AlwaysUseConfiguredRoutes` — bypass direct URL check (default `false`)
-- `ScrobbleIntervalMs` — default 15000
-- `DiscordEnabled`, `DiscordClientIdOverride` — Discord presence
-- `DiscordIdlePresence` — idle presence toggle (default `false`)
+- `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`, `DiscordPrivacyMode`
+- `MediaSessionAutoConnectId` — Guid of the connection to auto-connect for Media Session API (null = none)
 - `LogLevel` — Trace/Debug/Info/Warn/Error
 - `UrlSchemeRegistrationAsked` — one-time prompt flag
+- `AlwaysUseConfiguredRoutes` — bypass direct URL check (default `false`)
+
+### Per-Connection (`Connections[]`)
+- `Id` (Guid) — stable unique identifier (auto-generated)
+- `Name` — display name
+- `Routes[]` — `{ BaseUrl, UseHttps }` probed in order
+- `ApiKey` — stored API key
+- `IgnoredManagedFolderIds`, `ManagedFolderMappings` — folder management
 
 ## CLI Verbs
 
@@ -203,15 +134,13 @@ Parsed in `Program`:
 dotnet build
 
 # Tests
-dotnet test
+dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj
 
 # Single-file Windows build (framework-dependent)
 dotnet publish -c Release -r win-x64 --self-contained false
 
-# Single-file Linux build
+# Single-file Linux x64 / arm64 / macOS arm64
 dotnet publish -c Release -r linux-x64 --self-contained false
-
-# Single-file Linux arm64 / macOS arm64
 dotnet publish -c Release -r linux-arm64 --self-contained false
 dotnet publish -c Release -r osx-arm64 --self-contained false
 ```

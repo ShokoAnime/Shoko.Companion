@@ -21,6 +21,15 @@ public class ServerConnection
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
+    /// Stable unique identifier for this connection. Used as a stable key
+    /// for features like Media Session auto-connect, so renames don't
+    /// break the reference.
+    /// Generated automatically for new connections.
+    /// </summary>
+    [JsonProperty(PropertyName = "id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>
     /// Ordered list of routes for reaching this server.
     /// At least one route is required. Routes are probed in order.
     /// </summary>

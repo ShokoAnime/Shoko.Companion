@@ -107,6 +107,12 @@ public class CompanionSettings
     public bool CanUseDiscord => DiscordEnabled && !string.IsNullOrWhiteSpace(DiscordClientId);
 
     /// <summary>
+    /// The GUID of the server connection to auto-connect for the
+    /// Media Session API. Null means no auto-connect.
+    /// </summary>
+    public Guid? MediaSessionAutoConnectId { get; set; }
+
+    /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
     /// </summary>
