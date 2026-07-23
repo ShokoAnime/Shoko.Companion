@@ -68,7 +68,7 @@
                     <TextBlock Text="Auto-connect connection:" Grid.Row="0" Grid.ColumnSpan="2"/>
                     <ComboBox Name="MediaSessionConnectionCombo" Grid.Row="1" Grid.Column="0"
                               HorizontalAlignment="Stretch"
-                              LostFocus="OnAutoSaveSetting"/>
+                              SelectionChanged="OnAutoSaveSetting"/>
                     <Button Name="RefreshMediaSessionButton" Content="↻" Grid.Row="1" Grid.Column="1"
                             Width="32" Height="32" Margin="8,0,0,0" Click="OnRefreshMediaSessionClick"/>
                 </Grid>
@@ -101,7 +101,7 @@
                 <ComboBox Name="OnNewUrlCombo"
                           HorizontalAlignment="Stretch"
                           SelectedIndex="2"
-                          LostFocus="OnAutoSaveSetting">
+                          SelectionChanged="OnAutoSaveSetting">
                     <ComboBoxItem>Replace current playback</ComboBoxItem>
                     <ComboBoxItem>Ignore</ComboBoxItem>
                     <ComboBoxItem>Append to playlist</ComboBoxItem>
@@ -118,7 +118,7 @@
                     <TextBox Name="DiscordClientIdBox" Watermark="Client ID (leave blank for default)"
                              IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
                              Grid.Row="1" Grid.Column="0"
-                             LostFocus="OnAutoSaveSetting"/>
+                             TextChanged="OnDiscordClientIdTextChanged"/>
                     <Button Name="ResetDiscordClientIdButton" Content="🗑" Width="32" Height="32"
                             Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"
                             IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"/>
@@ -138,7 +138,7 @@
                 <TextBlock Text="Log level" FontWeight="SemiBold"/>
                 <ComboBox Name="LogLevelCombo" Width="120"
                           HorizontalAlignment="Left"
-                          LostFocus="OnAutoSaveSetting">
+                          SelectionChanged="OnAutoSaveSetting">
                     <ComboBoxItem Content="Trace"/>
                     <ComboBoxItem Content="Debug"/>
                     <ComboBoxItem Content="Info"/>

@@ -66,6 +66,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     // selections as deliberate user changes.
     private bool _streamInitPhase;
 
+    // False until the saved volume has been restored on the first file of a session.
+    // Prevents the initial mpv property-change for volume (which fires at startup
+    // with mpv's default value) from overwriting the persisted volume in settings.
+    private bool _volumeRestored;
+
     /// <summary>
     /// Gets the current playback state.
     /// </summary>
@@ -164,7 +169,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     {
         if (_state is PlaybackState.Playing or PlaybackState.Paused)
         {
-            switch (SettingsProvider.Instance.Settings.OnNewUrlAction)
+            var action = append.HasValue
+                ? (append.Value ? OnNewUrlBehavior.Append : OnNewUrlBehavior.Replace)
+                : SettingsProvider.Instance.Settings.OnNewUrlAction;
+            switch (action)
             {
                 case OnNewUrlBehavior.Ignore:
                     _notifications.Show("Shoko Companion",
@@ -283,9 +291,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             EnrichStreamMetadataFromPlaylist(_playlistItems, _streamMetadata);
             _streamInitPhase = true;
 
+            // Reset volume-restored guard so the initial mpv volume property-change
+            // doesn't overwrite the persisted value before we restore it.
+            _volumeRestored = false;
+
             // Pre-fetch first file's user data for resume
             var userData = await _apiClient.FetchFileUserDataAsync(firstFile.ID);
             _sessionFileId = firstFile.ID;
+            if (startPosition.HasValue && _streamMetadata.TryGetValue(firstFile.ID, out var metadata))
+                _streamMetadata[firstFile.ID] = metadata with { StartPosition = startPosition };
 
             // Find or use configured mpv path
             var mpvPath = SettingsProvider.Instance.Settings.MpvPath;
@@ -575,8 +589,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 break;
 
             case MpvPropVolume:
-                if (args.Data is long v)
-                    PersistVolume((int)v);
+                if (args.Data is long vl)
+                    PersistVolume((int)vl);
+                else if (args.Data is int vi)
+                    PersistVolume(vi);
+                else if (args.Data is double vd)
+                    PersistVolume((int)vd);
+                else
+                    Logger.Debug("Volume property-change with unexpected type: {Type} value={Value}",
+                        args.Data?.GetType().Name, args.Data);
                 break;
         }
     }
@@ -780,6 +801,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 Logger.Info("File loaded in mpv");
                 await Task.Delay(FileLoadedDelayMs);
 
+                // Only apply fullscreen on the first file of a playlist. Once the user
+                // has manually toggled it off, subsequent files should not grab the screen.
+                var isFirstFile = _sessionFileId.HasValue;
+
                 // First file: _sessionFileId is set. Subsequent files: the session is
                 // already active and CurrentFileId was set by HandlePathChanged.
                 var fileId = _sessionFileId ?? _sessionManager.CurrentFileId;
@@ -787,14 +812,25 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 {
                     var ud = await _apiClient.FetchFileUserDataAsync(fileId.Value);
 
-                    // Seek to resume position
-                    var resume = ud?.ProgressPosition;
+                    // Seek to position: explicit start position (e.g. Media Session)
+                    // takes precedence over the server-side resume position.
                     double resumeMs = 0;
-                    if (resume is not null && resume.Value.TotalSeconds > MinResumeSeconds)
+                    if (_streamMetadata.TryGetValue(fileId.Value, out var fileMeta)
+                        && fileMeta.StartPosition is { TotalSeconds: > MinResumeSeconds })
                     {
-                        resumeMs = resume.Value.TotalMilliseconds;
-                        Logger.Info("Seeking to resume position: {Pos}", resume.Value);
-                        await _mpv.SetPropertyAsync(MpvPropTimePos, resume.Value.TotalSeconds);
+                        resumeMs = fileMeta.StartPosition.Value.TotalMilliseconds;
+                        Logger.Info("Seeking to start position: {Pos}", fileMeta.StartPosition.Value);
+                        await _mpv.SetPropertyAsync(MpvPropTimePos, fileMeta.StartPosition.Value.TotalSeconds);
+                    }
+                    else
+                    {
+                        var resume = ud?.ProgressPosition;
+                        if (resume is not null && resume.Value.TotalSeconds > MinResumeSeconds)
+                        {
+                            resumeMs = resume.Value.TotalMilliseconds;
+                            Logger.Info("Seeking to resume position: {Pos}", resume.Value);
+                            await _mpv.SetPropertyAsync(MpvPropTimePos, resume.Value.TotalSeconds);
+                        }
                     }
 
                     // Start the session on the first file (subsequent files reuse the active session)
@@ -828,12 +864,14 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 // Initial track selection / restore is done — subsequent changes are user-driven
                 _streamInitPhase = false;
 
-                // Configure display
-                if (SettingsProvider.Instance.Settings.MpvFullScreen)
+                // Configure display — only on first file so the user can toggle fullscreen
+                // off for subsequent items without the companion grabbing it back.
+                if (SettingsProvider.Instance.Settings.MpvFullScreen && isFirstFile)
                     await _mpv.SetPropertyAsync("fullscreen", true);
                 var savedVolume = SettingsProvider.Instance.Settings.Volume;
                 if (SettingsProvider.Instance.Settings.RestoreVolume && savedVolume.HasValue)
                     await _mpv.SetPropertyAsync(MpvPropVolume, savedVolume.Value);
+                _volumeRestored = true;
                 await _mpv.SetPropertyAsync(MpvPropPause, false);
                 break;
 
@@ -851,6 +889,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 Logger.Info("mpv end-file: {Reason}", reason);
                 if (reason == "eof")
                 {
+                    // Emit stop scrobble for the file that just ended before we
+                    // transition to the next one. This ensures every file in a
+                    // multi-item playlist gets its PlaybackEnd event.
+                    _sessionManager.FinalizeCurrentFile();
+
                     if (_pendingPlaylistEntries > 0)
                     {
                         // Pause before the next file auto-loads so we can prep it
@@ -879,9 +922,23 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
     private void PersistVolume(int volume)
     {
-        if (!SettingsProvider.Instance.Settings.RestoreVolume)
+        // Ignore volume property-changes that fire during mpv startup before
+        // we've restored the saved volume. mpv reports its default (e.g. 100)
+        // as soon as the property is observed, which would overwrite the value
+        // we want to restore.
+        if (!_volumeRestored)
+        {
+            Logger.Trace("Volume change ignored — volume not yet restored");
             return;
+        }
 
+        if (!SettingsProvider.Instance.Settings.RestoreVolume)
+        {
+            Logger.Trace("Volume change ignored — RestoreVolume is disabled");
+            return;
+        }
+
+        Logger.Debug("Volume changed to {Volume}", Math.Clamp(volume, 0, 100));
         SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, 100);
         SettingsProvider.Instance.Save();
     }
@@ -1243,6 +1300,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         string? PosterUrl,
         int AnimeId,
         bool IsRestricted,
+        TimeSpan? StartPosition = null,
         int? TmdbShow = null,
         int? TmdbMovie = null,
         int? TvdbShow = null,

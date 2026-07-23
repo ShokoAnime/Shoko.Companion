@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
@@ -26,7 +27,11 @@ public partial class MainWindow : Window
 
     private static readonly string[] LogLevelValues = ["Trace", "Debug", "Info", "Warn", "Error"];
     private readonly ObservableCollection<ServerConnection> _connections;
-    private bool _loadingSettings;
+    private bool _loadingSettings = true;
+
+    // Debounce timer for the Discord Client ID text box — saves 500ms after
+    // the user stops typing, rather than relying on LostFocus.
+    private Timer? _discordDebounceTimer;
 
     // Track media session connection state
     private bool _mediaSessionConnected;
@@ -301,6 +306,25 @@ public partial class MainWindow : Window
         {
             Logger.Error(ex, "Failed to browse for mpv executable");
         }
+    }
+
+    private void OnDiscordClientIdTextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+
+        // Debounce: reset timer on each keystroke, save 500ms after typing stops.
+        _discordDebounceTimer?.Dispose();
+        _discordDebounceTimer = new Timer(_ =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                var s = SettingsProvider.Instance.Settings;
+                s.DiscordClientIdOverride = string.IsNullOrWhiteSpace(DiscordClientIdBox.Text)
+                    ? null
+                    : DiscordClientIdBox.Text.Trim();
+                SettingsProvider.Instance.Save();
+            });
+        }, null, 500, Timeout.Infinite);
     }
 
     private void OnAutoSaveSetting(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

@@ -275,6 +275,53 @@ public class PlaybackSessionManager
     }
 
     /// <summary>
+    /// Called when playback reaches the end of a file in a multi-item playlist
+    /// (end-file with reason "eof" and more items pending). Emits a <see cref="ScrobbleEventType.PlaybackEnd"/>
+    /// event for the current file so it gets scrobbled before the session moves on,
+    /// without ending the session itself.
+    /// </summary>
+    public void FinalizeCurrentFile()
+    {
+        if (_session is null)
+            return;
+
+        if (!SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
+            return;
+
+        if (_session.IsRestricted && SettingsProvider.Instance.Settings.SkipRestrictedContent)
+            return;
+
+        // Determine watched: either EOF was hit, or position >= 97.5% of duration
+        bool? watched = null;
+        if (_session.EofReached)
+        {
+            watched = true;
+        }
+        else if (_session.DurationMs > 0 && _session.PositionMs > 0 &&
+                 (_session.PositionMs / _session.DurationMs) >= AutoWatchRatio)
+        {
+            watched = true;
+        }
+
+        var fileId = _session.FileId;
+        var position = _session.PositionMs;
+
+        Logger.Info("Finalizing file {File}: pos={Pos:F0}ms, dur={Dur:F0}ms, eof={Eof}, watched={Watched}",
+            fileId, position, _session.DurationMs, _session.EofReached, watched);
+
+        Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
+        {
+            FileId = fileId,
+            EventType = ScrobbleEventType.PlaybackEnd,
+            Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
+            IsWatched = watched,
+            VideoStreamId = _session.VideoStreamId,
+            AudioStreamId = _session.AudioStreamId,
+            SubtitleStreamId = _session.SubtitleStreamId,
+        }));
+    }
+
+    /// <summary>
     /// Called when the playlist advances to the next file (end-file with non-eof reason).
     /// Resets scrobble throttling state without ending the session.
     /// </summary>
