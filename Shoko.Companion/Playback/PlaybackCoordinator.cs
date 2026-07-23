@@ -868,6 +868,19 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 // off for subsequent items without the companion grabbing it back.
                 if (SettingsProvider.Instance.Settings.MpvFullScreen && isFirstFile)
                     await _mpv.SetPropertyAsync("fullscreen", true);
+
+                // Set the mpv window title from the m3u8 EXTINF display title
+                // so it shows the exact Shoko episode name, not whatever the
+                // media file embeds. Falls back to AnimeName - EpisodeName.
+                if (fileId.HasValue && _streamMetadata.TryGetValue(fileId.Value, out var winMeta))
+                {
+                    var winTitle = winMeta.M3u8Title
+                        ?? (winMeta.AnimeName is not null && winMeta.EpisodeName is not null
+                            ? $"{winMeta.AnimeName} - {winMeta.EpisodeName}"
+                            : winMeta.AnimeName ?? winMeta.EpisodeName ?? $"<Video {fileId.Value}>");
+                    await _mpv.SetPropertyAsync("force-media-title", winTitle);
+                }
+
                 var savedVolume = SettingsProvider.Instance.Settings.Volume;
                 if (SettingsProvider.Instance.Settings.RestoreVolume && savedVolume.HasValue)
                     await _mpv.SetPropertyAsync(MpvPropVolume, savedVolume.Value);
@@ -1202,6 +1215,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             {
                 if (!lines[i].StartsWith("#EXTINF:")) continue;
 
+                // Grab the display title: #EXTINF:-1,Display Title
+                var extinfTitle = ParseExtinfTitle(lines[i]);
+
                 // The stream URL is the next non-empty, non-comment line
                 for (var j = i + 1; j < lines.Length; j++)
                 {
@@ -1214,7 +1230,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                         var fileId = int.Parse(match.Groups[1].Value);
                         if (!result.ContainsKey(fileId))
                         {
-                            result[fileId] = ParseStreamMetadata(lines[j], fileId);
+                            result[fileId] = ParseStreamMetadata(lines[j], fileId) with
+                            {
+                                M3u8Title = extinfTitle
+                            };
                         }
                     }
                     break;
@@ -1254,6 +1273,17 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             PosterUrl: isRestricted ? null : query["posterUrl"],
             AnimeId: animeId,
             IsRestricted: isRestricted);
+    }
+
+    /// <summary>
+    /// Extract the display title from an EXTINF line.
+    /// Format: <c>#EXTINF:-1,Display Title</c>
+    /// Returns the portion after the first comma, or null.
+    /// </summary>
+    private static string? ParseExtinfTitle(string line)
+    {
+        var comma = line.IndexOf(',');
+        return comma >= 0 ? line[(comma + 1)..].Trim() : null;
     }
 
     /// <summary>
@@ -1301,6 +1331,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         int AnimeId,
         bool IsRestricted,
         TimeSpan? StartPosition = null,
+        string? M3u8Title = null,
         int? TmdbShow = null,
         int? TmdbMovie = null,
         int? TvdbShow = null,
