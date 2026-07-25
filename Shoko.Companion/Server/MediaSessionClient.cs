@@ -23,7 +23,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private readonly string _deviceName;
     private readonly IPlaybackCoordinator _coordinator;
     private HubConnection? _connection;
-    private string? _sessionId;
+    private Guid? _sessionId;
+    private PlaybackStateUpdateDto? _lastState;
 
     /// <summary>
     /// Raised when the connection state changes.
@@ -139,8 +140,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         _connection.Reconnected += async _ =>
         {
-            Logger.Info("MediaSession: Reconnected, re-registering...");
-            await RegisterSessionAsync();
+            Logger.Info("MediaSession: Reconnected, reconnecting session...");
+            await ReconnectSessionOrRegisterAsync();
             ConnectionStateChanged?.Invoke(true);
         };
 
@@ -148,7 +149,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         {
             await _connection.StartAsync().ConfigureAwait(false);
             Logger.Info("MediaSession: Connected to hub");
-            await RegisterSessionAsync();
+            await ReconnectSessionOrRegisterAsync();
             ConnectionStateChanged?.Invoke(true);
         }
         catch (Exception ex)
@@ -177,6 +178,34 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Try to reconnect to the previous session, or register a new one.
+    /// </summary>
+    private async Task ReconnectSessionOrRegisterAsync()
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected)
+            return;
+
+        // If we have a previous session ID, try to reclaim it
+        if (_sessionId.HasValue)
+        {
+            try
+            {
+                var result = await _connection.InvokeAsync<SessionInfoDto>(
+                    "ReconnectSession", _sessionId.Value, _lastState);
+                _sessionId = result.SessionId;
+                Logger.Info("MediaSession: Reconnected to session {SessionId}", _sessionId.Value);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "MediaSession: Reconnect failed, registering new session");
+            }
+        }
+
+        await RegisterSessionAsync();
+    }
+
+    /// <summary>
     /// Register this companion as a session on the hub.
     /// </summary>
     private async Task RegisterSessionAsync()
@@ -197,9 +226,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Version = version,
             };
 
-            var result = await _connection.InvokeAsync<SessionInfoDto>("RegisterSession", deviceInfo);
+            var result = await _connection.InvokeAsync<SessionInfoDto>("RegisterSession", deviceInfo, _lastState);
             _sessionId = result.SessionId;
-            Logger.Info("MediaSession: Registered as session {SessionId}", _sessionId);
+            Logger.Info("MediaSession: Registered as session {SessionId}", _sessionId.Value);
         }
         catch (Exception ex)
         {
@@ -213,6 +242,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <param name="state">The current playback state to report.</param>
     public async Task ReportStateAsync(PlaybackStateUpdateDto state)
     {
+        _lastState = state;
+
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
             return;
 
@@ -245,7 +276,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             try
             {
                 // Try to unregister before disconnecting
-                if (_connection.State == HubConnectionState.Connected && _sessionId is not null)
+                if (_connection.State == HubConnectionState.Connected && _sessionId.HasValue)
                     await _connection.InvokeAsync("UnregisterSession");
             }
             catch
@@ -285,7 +316,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private sealed class SessionInfoDto
     {
         [JsonProperty("sessionId")]
-        public string SessionId { get; init; } = string.Empty;
+        public Guid SessionId { get; init; }
     }
 
     /// <summary>
