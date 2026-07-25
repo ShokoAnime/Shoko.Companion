@@ -56,7 +56,7 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 1. **Probe**: `GET /api/plugin/MediaSession/v1/Available` to check plugin availability
 2. **Connect**: `HubConnection` to `/signalr/plugin/MediaSession/v1` with `accessTokenFactory` sending the API key as Bearer token
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName })`
-4. **Receive commands**: `Play` (new media with StreamUrl), `Resume` (unpause current), `Pause`, `Seek`, `Stop` → relayed to `PlaybackCoordinator`
+4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop` → relayed to `PlaybackCoordinator`
 5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds })` on coordinator state changes
 
 **Auto-connect**: configured per-server-connection via `MediaSessionAutoConnectId` (Guid). Only one connection can auto-connect. Manual Connect/Disconnect buttons in the settings window.
