@@ -113,6 +113,19 @@ public class CompanionSettings
     public Guid? MediaSessionAutoConnectId { get; set; }
 
     /// <summary>
+    /// Allow remote clients to start new playback on this device.
+    /// When false, <c>CanPlay</c> is reported as disabled.
+    /// </summary>
+    public bool AllowRemotePlay { get; set; } = true;
+
+    /// <summary>
+    /// Allow remote clients to request a screenshot of the current
+    /// video frame. When false, <c>CanCaptureScreenshot</c> is reported
+    /// as disabled.
+    /// </summary>
+    public bool AllowRemoteScreenshot { get; set; } = true;
+
+    /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
     /// </summary>

@@ -69,6 +69,13 @@ public class PlaybackSessionManager
     /// <summary>Raised when a scrobble should be sent to the Shoko server.</summary>
     public event EventHandler<ScrobbleRequestEventArgs>? ScrobbleRequested;
 
+    /// <summary>
+    ///   Raised on every scrobble timer tick (even when throttled), so the
+    ///   media session hub gets periodic position updates during playback.
+    ///   The argument is the current position as a <see cref="TimeSpan"/>.
+    /// </summary>
+    public event EventHandler<TimeSpan>? PositionTick;
+
     /// <summary>Raised when the Discord presence should be updated, or null to clear.</summary>
     public event EventHandler<DiscordPresenceData?>? DiscordPresenceChanged;
 
@@ -362,6 +369,11 @@ public class PlaybackSessionManager
 
     private void OnScrobbleTimer(object? state)
     {
+        // Fire position tick on every timer beat so the media session hub
+        // gets regular position updates even when the scrobble is throttled.
+        var pos = TimeSpan.FromMilliseconds(_session?.PositionMs ?? 0);
+        Task.Run(() => PositionTick?.Invoke(this, pos));
+
         if (_session is null || _session.IsPaused)
             return;
 

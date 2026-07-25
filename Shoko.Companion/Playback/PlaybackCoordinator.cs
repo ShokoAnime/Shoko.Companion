@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.IO;
 using System.Threading;
 using System.Web;
 using System.Threading.Tasks;
@@ -117,6 +118,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     public event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
 
     /// <summary>
+    ///   Raised periodically (≈ every 10 s) during playback with the
+    ///   current position so the media session hub stays in sync.
+    /// </summary>
+    public event EventHandler<TimeSpan>? PositionTick;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
     /// Creates all internal services (API client, mpv controller, notifications, Discord)
     /// and wires mpv event handlers.
@@ -141,6 +148,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     {
         _sessionManager.ScrobbleRequested += OnSessionScrobbleRequested;
         _sessionManager.DiscordPresenceChanged += OnSessionDiscordPresenceChanged;
+        _sessionManager.PositionTick += (_, pos) => PositionTick?.Invoke(this, pos);
     }
 
     private void WireMpvEvents()
@@ -530,6 +538,41 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         Logger.Info("Seeking to {Position}", position);
         await _mpv.SetPropertyAsync("time-pos", position.TotalSeconds);
         _sessionManager.OnSeek(position.TotalMilliseconds);
+    }
+
+    /// <inheritdoc/>
+    public async Task<byte[]?> CaptureScreenshotAsync()
+    {
+        if (_state is not (PlaybackState.Playing or PlaybackState.Paused))
+            return null;
+
+        var tempPath = Path.GetTempFileName() + ".png";
+        try
+        {
+            await _mpv.SendCommandAsync("screenshot-to-file", [tempPath]);
+
+            if (!File.Exists(tempPath))
+                return null;
+
+            return await File.ReadAllBytesAsync(tempPath);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Screenshot capture failed");
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+                // Best-effort cleanup
+            }
+        }
     }
 
     private void OnMpvPropertyChanged(object? sender, MpvPropertyChangeEventArgs args)

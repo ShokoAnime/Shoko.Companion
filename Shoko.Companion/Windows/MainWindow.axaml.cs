@@ -369,12 +369,20 @@ public partial class MainWindow : Window
             s.LogLevel = level;
 
         // Media Session auto-connect
+        s.AllowRemotePlay = AllowRemotePlayCheck.IsChecked == true;
+        s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
         if (MediaSessionConnectionCombo.SelectedItem is MediaSessionConnectionItem msItem && msItem.Id != Guid.Empty)
             s.MediaSessionAutoConnectId = msItem.Id;
         else
             s.MediaSessionAutoConnectId = null;
 
         SettingsProvider.Instance.Save();
+
+        // Push updated capabilities to the hub after saving
+        if (Avalonia.Application.Current is App app && app.MediaSessionClient is not null)
+        {
+            _ = app.MediaSessionClient.UpdateCapabilitiesOnHubAsync();
+        }
     }
 
     private void OnVolumeSliderChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -402,6 +410,9 @@ public partial class MainWindow : Window
             Display = c.Name,
             Id = c.Id,
         }));
+
+        AllowRemotePlayCheck.IsChecked = s.AllowRemotePlay;
+        AllowRemoteScreenshotCheck.IsChecked = s.AllowRemoteScreenshot;
 
         MediaSessionConnectionCombo.ItemsSource = items;
 

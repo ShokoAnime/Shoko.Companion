@@ -1,10 +1,12 @@
 using System;
 using System.Net.Http;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR.Client;
 using Newtonsoft.Json;
 using NLog;
+using Shoko.Companion.Configuration;
 using Shoko.Companion.Playback;
 
 namespace Shoko.Companion.Server;
@@ -25,6 +27,25 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private HubConnection? _connection;
     private Guid? _sessionId;
     private PlaybackStateUpdateDto? _lastState;
+    private CancellationTokenSource? _stoppedTimerCts;
+    private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(30);
+    private bool _hasActivePlayback;
+
+    /// <summary>
+    ///   Whether a media file is currently loaded and playable.
+    ///   Used to gate resume/pause/seek/stop/screenshot capabilities.
+    /// </summary>
+    public bool HasActivePlayback
+    {
+        set
+        {
+            if (_hasActivePlayback != value)
+            {
+                _hasActivePlayback = value;
+                _ = UpdateCapabilitiesOnHubAsync();
+            }
+        }
+    }
 
     /// <summary>
     /// Raised when the connection state changes.
@@ -48,16 +69,23 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <param name="apiKey">The API key for authentication.</param>
     /// <param name="deviceName">The device name to register with the hub.</param>
     /// <param name="coordinator">The playback coordinator to relay commands to.</param>
+    /// <param name="initialState">
+    ///   Optional. The device's current playback state. When provided, the
+    ///   session starts in this state instead of defaulting to
+    ///   <c>Idle</c>. Useful when reconnecting after a full client reset.
+    /// </param>
     public MediaSessionClient(
         string baseUrl,
         string apiKey,
         string deviceName,
-        IPlaybackCoordinator coordinator)
+        IPlaybackCoordinator coordinator,
+        PlaybackStateUpdateDto? initialState = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _apiKey = apiKey;
         _deviceName = deviceName;
         _coordinator = coordinator;
+        _lastState = initialState;
     }
 
     /// <summary>
@@ -130,6 +158,24 @@ public sealed class MediaSessionClient : IAsyncDisposable
         {
             Logger.Info("MediaSession: Stop command received");
             await _coordinator.StopAsync();
+        });
+
+        _connection.On<Guid>("RequestScreenshot", async requestId =>
+        {
+            Logger.Info("MediaSession: Screenshot requested");
+            try
+            {
+                var data = await _coordinator.CaptureScreenshotAsync();
+                if (data is not null)
+                {
+                    await _connection.InvokeAsync("ReportScreenshot", requestId,
+                        new ScreenshotDataDto { Data = data });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(ex, "MediaSession: Failed to report screenshot");
+            }
         });
 
         _connection.Closed += async error =>
@@ -230,6 +276,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 DeviceType = "Companion",
                 Platform = GetPlatform(),
                 Version = version,
+                Capabilities = BuildCurrentCapabilities(),
             };
 
             var result = await _connection.InvokeAsync<SessionInfoDto>("RegisterSession", deviceInfo, _lastState);
@@ -248,6 +295,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <param name="state">The current playback state to report.</param>
     public async Task ReportStateAsync(PlaybackStateUpdateDto state)
     {
+        CancelStoppedTimer();
         _lastState = state;
 
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
@@ -260,6 +308,100 @@ public sealed class MediaSessionClient : IAsyncDisposable
         catch (Exception ex)
         {
             Logger.Debug(ex, "MediaSession: Failed to report state");
+        }
+
+        // If playback just stopped, schedule an auto-transition to Idle
+        // after a grace period. Any new play/pause/resume cancels it.
+        if (state.State == "Stopped")
+            StartStoppedTimer();
+    }
+
+    /// <summary>
+    /// Start the stopped→idle timer. Any previous timer is cancelled first.
+    /// </summary>
+    private void StartStoppedTimer()
+    {
+        CancelStoppedTimer();
+        Logger.Trace("MediaSession: Stopped→Idle timer started ({0}s)", StoppedToIdleDelay.TotalSeconds);
+        var cts = new CancellationTokenSource();
+        _stoppedTimerCts = cts;
+        _ = StoppedToIdleAsync(cts.Token);
+    }
+
+    /// <summary>
+    /// Cancel any pending stopped→idle transition.
+    /// </summary>
+    private void CancelStoppedTimer()
+    {
+        _stoppedTimerCts?.Cancel();
+        _stoppedTimerCts?.Dispose();
+        _stoppedTimerCts = null;
+    }
+
+    /// <summary>
+    /// After <see cref="StoppedToIdleDelay"/> report Idle to the hub.
+    /// Cancelled if a new state update arrives before the timeout.
+    /// </summary>
+    private async Task StoppedToIdleAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(StoppedToIdleDelay, ct);
+            Logger.Trace("MediaSession: Stopped→Idle timer fired — reporting Idle");
+            await ReportStateAsync(new PlaybackStateUpdateDto
+            {
+                State = "Idle",
+                FileId = null,
+                VideoId = null,
+                Title = null,
+                MediaType = null,
+                Position = TimeSpan.Zero,
+                Duration = null,
+                StreamUrl = null,
+                IsPaused = false,
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.Trace("MediaSession: Stopped→Idle timer cancelled — new state arrived");
+        }
+    }
+
+    /// <summary>
+    ///   Build current capability flags from settings + playback state.
+    /// </summary>
+    private SessionCapabilitiesDto BuildCurrentCapabilities()
+    {
+        var s = SettingsProvider.Instance.Settings;
+        return new SessionCapabilitiesDto
+        {
+            CanPlay = s.AllowRemotePlay,
+            CanResumeOrPause = _hasActivePlayback,
+            CanSeek = _hasActivePlayback,
+            CanStop = _hasActivePlayback,
+            CanReportState = _hasActivePlayback,
+            CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback,
+        };
+    }
+
+    /// <summary>
+    ///   Build current capability flags from settings + playback state
+    ///   and push them to the hub so the dashboard reacts immediately.
+    /// </summary>
+    public async Task UpdateCapabilitiesOnHubAsync()
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+            return;
+
+        var caps = BuildCurrentCapabilities();
+
+        try
+        {
+            await _connection.InvokeAsync("UpdateCapabilities", caps);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "MediaSession: Failed to update capabilities");
         }
     }
 
@@ -277,6 +419,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
+        CancelStoppedTimer();
+
         if (_connection is not null)
         {
             try
@@ -317,6 +461,30 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("version")]
         public string? Version { get; init; }
+
+        [JsonProperty("capabilities")]
+        public SessionCapabilitiesDto Capabilities { get; init; } = new();
+    }
+
+    private sealed class SessionCapabilitiesDto
+    {
+        [JsonProperty("canPlay")]
+        public bool CanPlay { get; init; } = true;
+
+        [JsonProperty("canResumeOrPause")]
+        public bool CanResumeOrPause { get; init; } = true;
+
+        [JsonProperty("canSeek")]
+        public bool CanSeek { get; init; } = true;
+
+        [JsonProperty("canStop")]
+        public bool CanStop { get; init; } = true;
+
+        [JsonProperty("canReportState")]
+        public bool CanReportState { get; init; } = true;
+
+        [JsonProperty("canCaptureScreenshot")]
+        public bool CanCaptureScreenshot { get; init; } = false;
     }
 
     private sealed class SessionInfoDto
@@ -472,4 +640,22 @@ public sealed class NextMediaItemInfoDto
     /// </summary>
     [JsonProperty("thumbnailUrl")]
     public string? ThumbnailUrl { get; init; }
+}
+
+/// <summary>
+/// DTO for screenshot data, mirroring the server's ScreenshotData.
+/// </summary>
+public sealed class ScreenshotDataDto
+{
+    /// <summary>
+    /// MIME type of the image data (e.g. "image/png").
+    /// </summary>
+    [JsonProperty("mimeType")]
+    public string MimeType { get; init; } = "image/png";
+
+    /// <summary>
+    /// Raw image data bytes.
+    /// </summary>
+    [JsonProperty("data")]
+    public byte[] Data { get; init; } = [];
 }

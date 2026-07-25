@@ -64,6 +64,12 @@
                 <TextBlock Text="Media Session API" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
                 <TextBlock Text="Remote playback control via the Media Session plugin."
                            FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <CheckBox Name="AllowRemotePlayCheck" Content="Allow remote play"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
                     <TextBlock Text="Auto-connect connection:" Grid.Row="0" Grid.ColumnSpan="2"/>
                     <ComboBox Name="MediaSessionConnectionCombo" Grid.Row="1" Grid.Column="0"
@@ -93,7 +99,6 @@
 
                 <CheckBox Name="MpvFullScreenCheck" Content="Start in full screen"
                           IsCheckedChanged="OnAutoSaveSetting"/>
-
                 <CheckBox Name="MpvStartPausedCheck" Content="Start playback paused"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 

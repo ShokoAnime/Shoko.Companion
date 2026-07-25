@@ -45,6 +45,12 @@ public interface IPlaybackCoordinator
     event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
 
     /// <summary>
+    ///   Raised periodically (≈ every 10 s) during playback with the
+    ///   current position so the media session hub stays in sync.
+    /// </summary>
+    event EventHandler<TimeSpan>? PositionTick;
+
+    /// <summary>
     /// Play a shoko: URL (handles m3u8 ↔ JSON resolution, mpv launch, scrobble, etc).
     /// </summary>
     /// <param name="shokoUrl">
@@ -80,4 +86,11 @@ public interface IPlaybackCoordinator
     /// Seek to the specified position in seconds.
     /// </summary>
     Task SeekAsync(TimeSpan positionSeconds);
+
+    /// <summary>
+    ///   Capture the current video frame via mpv's screenshot-to-file
+    ///   command. Returns the frame data as a PNG byte array, or null
+    ///   if capture fails or no video is loaded.
+    /// </summary>
+    Task<byte[]?> CaptureScreenshotAsync();
 }

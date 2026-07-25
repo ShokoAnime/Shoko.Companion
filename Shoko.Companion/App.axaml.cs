@@ -66,6 +66,7 @@ public partial class App : Application
         _coordinator = new PlaybackCoordinator();
         _coordinator.StateChanged += OnPlaybackStateChanged;
         _coordinator.StateChanged += OnCoordinatorStateChanged;
+        _coordinator.PositionTick += OnCoordinatorPositionTick;
 
         // Auto-connect Media Session if configured
         var autoConnectId = SettingsProvider.Instance.Settings.MediaSessionAutoConnectId;
@@ -470,6 +471,10 @@ public partial class App : Application
         if (MediaSessionClient?.IsConnected != true)
             return;
 
+        // Update live capabilities based on playback state
+        MediaSessionClient.HasActivePlayback = args.NewState
+            is PlaybackState.Playing or PlaybackState.Paused;
+
         var state = args.NewState switch
         {
             PlaybackState.Playing => "Playing",
@@ -488,10 +493,76 @@ public partial class App : Application
             VideoId = _coordinator!.CurrentFileId,
             Title = _coordinator!.CurrentTitle,
             Position = TimeSpan.FromSeconds(_coordinator!.CurrentPositionSeconds),
-            Duration = _coordinator!.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value) : null,
+            Duration = _coordinator!.DurationSeconds.HasValue
+                ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value)
+                : null,
             StreamUrl = _coordinator!.CurrentStreamUrl,
             IsPaused = args.NewState == PlaybackState.Paused,
         });
+    }
+
+    private void OnCoordinatorPositionTick(object? sender, TimeSpan position)
+    {
+        if (MediaSessionClient?.IsConnected != true)
+            return;
+
+        var state = _coordinator!.CurrentState switch
+        {
+            PlaybackState.Playing => "Playing",
+            PlaybackState.Paused => "Paused",
+            PlaybackState.Idle => "Idle",
+            PlaybackState.Stopped => "Stopped",
+            PlaybackState.Loading => "Loading",
+            PlaybackState.Error => "Error",
+            _ => "Idle",
+        };
+
+        _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
+        {
+            State = state,
+            FileId = _coordinator!.CurrentFileId,
+            VideoId = _coordinator!.CurrentFileId,
+            Title = _coordinator!.CurrentTitle,
+            Position = position,
+            Duration = _coordinator!.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value) : null,
+            StreamUrl = _coordinator!.CurrentStreamUrl,
+            IsPaused = state == "Paused",
+        });
+    }
+
+    /// <summary>
+    /// Build a state DTO from the coordinator's current playback state,
+    /// or null if the coordinator isn't active.
+    /// </summary>
+    private PlaybackStateUpdateDto? BuildStateFromCoordinator()
+    {
+        if (_coordinator is null)
+            return null;
+
+        var stateStr = _coordinator.CurrentState switch
+        {
+            PlaybackState.Playing => "Playing",
+            PlaybackState.Paused => "Paused",
+            PlaybackState.Idle => "Idle",
+            PlaybackState.Stopped => "Stopped",
+            PlaybackState.Loading => "Loading",
+            PlaybackState.Error => "Error",
+            _ => "Idle",
+        };
+
+        return new PlaybackStateUpdateDto
+        {
+            State = stateStr,
+            FileId = _coordinator.CurrentFileId,
+            VideoId = _coordinator.CurrentFileId,
+            Title = _coordinator.CurrentTitle,
+            Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
+            Duration = _coordinator.DurationSeconds.HasValue
+                ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
+                : null,
+            StreamUrl = _coordinator.CurrentStreamUrl,
+            IsPaused = _coordinator.CurrentState == PlaybackState.Paused,
+        };
     }
 
     /// <summary>
@@ -499,10 +570,14 @@ public partial class App : Application
     /// </summary>
     public async Task ConnectMediaSessionAsync(string baseUrl, string apiKey)
     {
+        // Capture playback state before disposing the old client,
+        // so the new client can re-register with the correct state.
+        var initialState = BuildStateFromCoordinator();
+
         if (MediaSessionClient is not null)
             await DisconnectMediaSessionAsync();
 
-        MediaSessionClient = new MediaSessionClient(baseUrl, apiKey, DeviceInfo.DeviceName, _coordinator!);
+        MediaSessionClient = new MediaSessionClient(baseUrl, apiKey, DeviceInfo.DeviceName, _coordinator!, initialState);
 
         var available = await MediaSessionClient.IsPluginAvailableAsync(baseUrl, apiKey);
         if (available)
