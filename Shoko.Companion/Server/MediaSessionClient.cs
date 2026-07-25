@@ -114,6 +114,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await _coordinator.PauseAsync();
         });
 
+        _connection.On("Resume", async () =>
+        {
+            Logger.Info("MediaSession: Resume command received");
+            await _coordinator.ResumeAsync();
+        });
+
         _connection.On<TimeSpan>("Seek", async position =>
         {
             Logger.Info("MediaSession: Seek to {Position}", position);

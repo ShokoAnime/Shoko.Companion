@@ -13,7 +13,7 @@ A lightweight, cross-platform **system-tray companion** for [Shoko Server](https
 ## Features
 
 - **Plays in mpv** — catches `shoko://` URLs, launches mpv, plays the stream.
-- **Playback events** — periodic position updates, start/pause/resume/stop events, auto-marks watched at ≥ 97.5%.
+- **Playback events** — periodic position updates, start/pause/resume/stop events, auto-marks watched at ≥ 97.5%. `Play` (new media) and `Resume` (unpause current) are separate commands.
 - **Resume support** — pre-fetches resume position and seeks mpv on file load.
 - **Server connections** — multiple connections with route fallback; auto-discovered from  the `shoko://` URLs or manually configured.
 - **Managed folder mappings** — resolves "Open Folder" actions from the web UI to local paths.
