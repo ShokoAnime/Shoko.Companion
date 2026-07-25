@@ -130,6 +130,12 @@ public class CompanionSettings
     public bool MpvFullScreen { get; set; } = true;
 
     /// <summary>
+    /// When true, mpv starts playback in a paused state so the user
+    /// can manually resume when ready.
+    /// </summary>
+    public bool MpvStartPaused { get; set; }
+
+    /// <summary>
     /// When true, the volume level is persisted between sessions and restored
     /// on each playback start. When false, mpv's own volume configuration
     /// (mpv.conf / per-user config) is left untouched.

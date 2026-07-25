@@ -854,6 +854,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                             posterUrl, animeId, epIds
                         );
 
+                        // If mpv was launched paused, the initial pause=true
+                        // observer event fired before StartSession. Transition
+                        // to Paused now so the session doesn't hang in Loading.
+                        if (SettingsProvider.Instance.Settings.MpvStartPaused)
+                            SetState(PlaybackState.Paused);
+
                         _sessionFileId = null;
                     }
 
@@ -885,7 +891,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 if (SettingsProvider.Instance.Settings.RestoreVolume && savedVolume.HasValue)
                     await _mpv.SetPropertyAsync(MpvPropVolume, savedVolume.Value);
                 _volumeRestored = true;
-                await _mpv.SetPropertyAsync(MpvPropPause, false);
+                if (!SettingsProvider.Instance.Settings.MpvStartPaused)
+                    await _mpv.SetPropertyAsync(MpvPropPause, false);
                 break;
 
             case "seek":

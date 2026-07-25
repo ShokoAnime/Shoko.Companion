@@ -221,6 +221,7 @@ public partial class MainWindow : Window
         ResetDiscordClientIdButton.Click += (_, _) => DiscordClientIdBox.Text = string.Empty;
 
         MpvFullScreenCheck.IsChecked = s.MpvFullScreen;
+        MpvStartPausedCheck.IsChecked = s.MpvStartPaused;
 
         RestoreVolumeCheck.IsChecked = s.RestoreVolume;
         if (s.Volume.HasValue)
@@ -343,6 +344,7 @@ public partial class MainWindow : Window
         var s = SettingsProvider.Instance.Settings;
         s.MpvPath = string.IsNullOrWhiteSpace(MpvPathBox.Text) ? null : MpvPathBox.Text.Trim();
         s.MpvFullScreen = MpvFullScreenCheck.IsChecked == true;
+        s.MpvStartPaused = MpvStartPausedCheck.IsChecked == true;
         s.DiscordEnabled = DiscordEnabledCheck.IsChecked == true;
         s.DiscordClientIdOverride = string.IsNullOrWhiteSpace(DiscordClientIdBox.Text) ? null : DiscordClientIdBox.Text.Trim();
         s.DiscordIdlePresence = DiscordIdlePresenceCheck.IsChecked == true;
