@@ -951,8 +951,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             return;
         }
 
-        Logger.Debug("Volume changed to {Volume}", Math.Clamp(volume, 0, 100));
-        SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, 100);
+        Logger.Debug("Volume changed to {Volume}", Math.Clamp(volume, 0, 130));
+        SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, 130);
         SettingsProvider.Instance.Save();
     }
 

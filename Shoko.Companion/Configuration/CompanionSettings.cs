@@ -137,10 +137,10 @@ public class CompanionSettings
     public bool RestoreVolume { get; set; }
 
     /// <summary>
-    /// The saved volume level (0–100), or null if never set. Only applied
+    /// The saved volume level (0–130), or null if never set. Only applied
     /// when <see cref="RestoreVolume"/> is true and this has a value.
     /// </summary>
-    [Range(0, 100)]
+    [Range(0, 130)]
     public int? Volume { get; set; }
 
     /// <summary>

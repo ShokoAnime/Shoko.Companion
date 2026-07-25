@@ -223,6 +223,16 @@ public partial class MainWindow : Window
         MpvFullScreenCheck.IsChecked = s.MpvFullScreen;
 
         RestoreVolumeCheck.IsChecked = s.RestoreVolume;
+        if (s.Volume.HasValue)
+        {
+            VolumeSlider.Value = s.Volume.Value;
+            VolumeLabel.Text = $"{s.Volume.Value}%";
+        }
+        else
+        {
+            VolumeSlider.Value = 100;
+            VolumeLabel.Text = "100%";
+        }
 
         OnNewUrlCombo.SelectedIndex = s.OnNewUrlAction switch
         {
@@ -351,6 +361,7 @@ public partial class MainWindow : Window
         s.AlwaysUseConfiguredRoutes = AlwaysUseRoutesCheck.IsChecked == true;
 
         s.RestoreVolume = RestoreVolumeCheck.IsChecked == true;
+        s.Volume = (int)VolumeSlider.Value;
 
         if (LogLevelCombo.SelectedItem is ComboBoxItem item && item.Content is string level)
             s.LogLevel = level;
@@ -362,6 +373,13 @@ public partial class MainWindow : Window
             s.MediaSessionAutoConnectId = null;
 
         SettingsProvider.Instance.Save();
+    }
+
+    private void OnVolumeSliderChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        var val = (int)e.NewValue;
+        VolumeLabel.Text = $"{val}%";
+        OnAutoSaveSetting(sender, null!);
     }
 
     private void OnManageFoldersClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

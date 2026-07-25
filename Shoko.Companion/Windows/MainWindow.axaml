@@ -97,6 +97,15 @@
                 <CheckBox Name="RestoreVolumeCheck" Content="Remember volume between sessions"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0"
+                            IsEnabled="{Binding IsChecked, ElementName=RestoreVolumeCheck}">
+                    <TextBlock Text="Volume:" VerticalAlignment="Center" MinWidth="50"/>
+                    <Slider Name="VolumeSlider" Minimum="0" Maximum="130" TickFrequency="10"
+                            TickPlacement="BottomRight" Width="200"
+                            ValueChanged="OnVolumeSliderChanged"/>
+                    <TextBlock Name="VolumeLabel" Text="100%" VerticalAlignment="Center" MinWidth="40"/>
+                </StackPanel>
+
                 <TextBlock Text="When a new URL arrives:" FontWeight="SemiBold"/>
                 <ComboBox Name="OnNewUrlCombo"
                           HorizontalAlignment="Stretch"
