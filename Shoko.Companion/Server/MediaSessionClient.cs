@@ -86,6 +86,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         _deviceName = deviceName;
         _coordinator = coordinator;
         _lastState = initialState;
+        _hasActivePlayback = initialState?.State is "Playing" or "Paused";
     }
 
     /// <summary>
@@ -220,8 +221,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // Construct a shoko:// URL — the coordinator handles the
             // full resolution pipeline (playlist, mpv, scrobble).
             var uri = new Uri(_baseUrl);
-            var shokoUrl = $"shoko://{uri.Host}:{uri.Port}/play?playlist=f{request.VideoId}";
-            await _coordinator.PlayAsync(shokoUrl, request.StartPosition);
+            var shokoUrl = $"shoko://{uri.Authority}/play?playlist=f{request.VideoId}";
+            await _coordinator.PlayAsync(shokoUrl, request.StartPosition, request.Append);
         }
         catch (Exception ex)
         {
@@ -458,52 +459,52 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
     private sealed class RegisterDeviceDto
     {
-        [JsonProperty("name")]
+        [JsonProperty("Name")]
         public string Name { get; init; } = string.Empty;
 
-        [JsonProperty("deviceType")]
+        [JsonProperty("DeviceType")]
         public string DeviceType { get; init; } = string.Empty;
 
-        [JsonProperty("clientName")]
+        [JsonProperty("ClientName")]
         public string? ClientName { get; init; }
 
-        [JsonProperty("hostName")]
+        [JsonProperty("HostName")]
         public string? HostName { get; init; }
 
-        [JsonProperty("platform")]
+        [JsonProperty("Platform")]
         public string? Platform { get; init; }
 
-        [JsonProperty("version")]
+        [JsonProperty("Version")]
         public string? Version { get; init; }
 
-        [JsonProperty("capabilities")]
+        [JsonProperty("Capabilities")]
         public SessionCapabilitiesDto Capabilities { get; init; } = new();
     }
 
     private sealed class SessionCapabilitiesDto
     {
-        [JsonProperty("canPlay")]
+        [JsonProperty("CanPlay")]
         public bool CanPlay { get; init; } = true;
 
-        [JsonProperty("canResumeOrPause")]
+        [JsonProperty("CanResumeOrPause")]
         public bool CanResumeOrPause { get; init; } = true;
 
-        [JsonProperty("canSeek")]
+        [JsonProperty("CanSeek")]
         public bool CanSeek { get; init; } = true;
 
-        [JsonProperty("canStop")]
+        [JsonProperty("CanStop")]
         public bool CanStop { get; init; } = true;
 
-        [JsonProperty("canReportState")]
+        [JsonProperty("CanReportState")]
         public bool CanReportState { get; init; } = true;
 
-        [JsonProperty("canCaptureScreenshot")]
+        [JsonProperty("CanCaptureScreenshot")]
         public bool CanCaptureScreenshot { get; init; } = false;
     }
 
     private sealed class SessionInfoDto
     {
-        [JsonProperty("sessionId")]
+        [JsonProperty("SessionId")]
         public Guid SessionId { get; init; }
     }
 
@@ -535,7 +536,7 @@ public sealed class PlaybackRequestDto
     /// Shoko video ID to play. The companion resolves this to a stream URL
     /// through the playlist/stream pipeline.
     /// </summary>
-    [JsonProperty("videoId")]
+    [JsonProperty("VideoId")]
     public int VideoId { get; init; }
 
     /// <summary>
@@ -543,14 +544,14 @@ public sealed class PlaybackRequestDto
     ///   Leave as <c>null</c> to leave it up to the client. Set to <c>true</c>
     ///   to always append, <c>false</c> to always replace.
     /// </summary>
-    [JsonProperty("append")]
-    public bool Append { get; init; }
+    [JsonProperty("Append")]
+    public bool? Append { get; init; }
 
     /// <summary>
     ///   Optional. Start position to seek to upon playing the video. The
     ///   companion seeks to this position after loading the video.
     /// </summary>
-    [JsonProperty("startPosition")]
+    [JsonProperty("StartPosition")]
     public TimeSpan? StartPosition { get; init; }
 }
 
@@ -562,67 +563,67 @@ public sealed class PlaybackStateUpdateDto
     /// <summary>
     /// The playback state string (Playing, Paused, Idle, Stopped, Loading, Error).
     /// </summary>
-    [JsonProperty("state")]
+    [JsonProperty("State")]
     public string State { get; init; } = "Idle";
 
     /// <summary>
     /// The file ID currently being played, if any.
     /// </summary>
-    [JsonProperty("fileId")]
+    [JsonProperty("FileId")]
     public int? FileId { get; init; }
 
     /// <summary>
     /// The Shoko video ID, if managed by Shoko.
     /// </summary>
-    [JsonProperty("videoId")]
+    [JsonProperty("VideoId")]
     public int? VideoId { get; init; }
 
     /// <summary>
     /// Title of the currently playing media.
     /// </summary>
-    [JsonProperty("title")]
+    [JsonProperty("Title")]
     public string? Title { get; init; }
 
     /// <summary>
     /// Media type: "video", "audio", or "unknown".
     /// </summary>
-    [JsonProperty("mediaType")]
+    [JsonProperty("MediaType")]
     public string? MediaType { get; init; }
 
     /// <summary>
     /// Thumbnail or poster URL, if available.
     /// </summary>
-    [JsonProperty("thumbnailUrl")]
+    [JsonProperty("ThumbnailUrl")]
     public string? ThumbnailUrl { get; init; }
 
     /// <summary>
     /// Next item in the play queue, or null if none.
     /// </summary>
-    [JsonProperty("nextItem")]
+    [JsonProperty("NextItem")]
     public NextMediaItemInfoDto? NextItem { get; init; }
 
     /// <summary>
     /// The current playback position.
     /// </summary>
-    [JsonProperty("position")]
+    [JsonProperty("Position")]
     public TimeSpan Position { get; init; }
 
     /// <summary>
     /// The total duration, if known.
     /// </summary>
-    [JsonProperty("duration")]
+    [JsonProperty("Duration")]
     public TimeSpan? Duration { get; init; }
 
     /// <summary>
     /// Whether playback is currently paused.
     /// </summary>
-    [JsonProperty("isPaused")]
+    [JsonProperty("IsPaused")]
     public bool IsPaused { get; init; }
 
     /// <summary>
     /// Stream URL the player is using, if known.
     /// </summary>
-    [JsonProperty("streamUrl")]
+    [JsonProperty("StreamUrl")]
     public string? StreamUrl { get; init; }
 }
 
@@ -634,25 +635,25 @@ public sealed class NextMediaItemInfoDto
     /// <summary>
     /// Human-readable title, or null if no next item.
     /// </summary>
-    [JsonProperty("title")]
+    [JsonProperty("Title")]
     public string? Title { get; init; }
 
     /// <summary>
     /// Media type hint: "video" or "audio". Null if unknown.
     /// </summary>
-    [JsonProperty("mediaType")]
+    [JsonProperty("MediaType")]
     public string? MediaType { get; init; }
 
     /// <summary>
     /// Shoko video ID, if the next item is managed by Shoko.
     /// </summary>
-    [JsonProperty("videoId")]
+    [JsonProperty("VideoId")]
     public int? VideoId { get; init; }
 
     /// <summary>
     /// Thumbnail or poster URL for the next item, if available.
     /// </summary>
-    [JsonProperty("thumbnailUrl")]
+    [JsonProperty("ThumbnailUrl")]
     public string? ThumbnailUrl { get; init; }
 }
 
@@ -664,12 +665,12 @@ public sealed class ScreenshotDataDto
     /// <summary>
     /// MIME type of the image data (e.g. "image/png").
     /// </summary>
-    [JsonProperty("mimeType")]
+    [JsonProperty("MimeType")]
     public string MimeType { get; init; } = "image/png";
 
     /// <summary>
     /// Raw image data bytes.
     /// </summary>
-    [JsonProperty("data")]
+    [JsonProperty("Data")]
     public byte[] Data { get; init; } = [];
 }

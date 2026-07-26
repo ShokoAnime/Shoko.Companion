@@ -26,7 +26,7 @@ public class ServerConnection
     /// break the reference.
     /// Generated automatically for new connections.
     /// </summary>
-    [JsonProperty(PropertyName = "id")]
+    [JsonProperty("id")]
     public Guid Id { get; set; } = Guid.NewGuid();
 
     /// <summary>
