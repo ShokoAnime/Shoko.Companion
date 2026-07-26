@@ -899,9 +899,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
                         // If mpv was launched paused, the initial pause=true
                         // observer event fired before StartSession. Transition
-                        // to Paused now so the session doesn't hang in Loading.
+                        // to Paused now so the session doesn't hang in Loading
+                        // and sync the session state so the scrobble timer stops.
                         if (SettingsProvider.Instance.Settings.MpvStartPaused)
+                        {
                             SetState(PlaybackState.Paused);
+                            _sessionManager.OnPauseChanged(true);
+                        }
 
                         _sessionFileId = null;
                     }

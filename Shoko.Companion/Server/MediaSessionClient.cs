@@ -246,6 +246,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
                     "ReconnectSession", _sessionId.Value, _lastState);
                 _sessionId = result.SessionId;
                 Logger.Info("MediaSession: Reconnected to session {SessionId}", _sessionId.Value);
+
+                // Push current capabilities — they may have changed while
+                // disconnected (e.g. playback stopped, _hasActivePlayback flipped).
+                await UpdateCapabilitiesOnHubAsync();
+
+                // Restart stopped→idle timer if we reconnected while stopped,
+                // otherwise the hub would see "Stopped" indefinitely.
+                if (_lastState?.State == "Stopped")
+                    StartStoppedTimer();
+
                 return;
             }
             catch (Exception ex)
@@ -255,6 +265,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
         }
 
         await RegisterSessionAsync();
+
+        // Same restart for the fresh-registration path
+        if (_lastState?.State == "Stopped")
+            StartStoppedTimer();
     }
 
     /// <summary>
