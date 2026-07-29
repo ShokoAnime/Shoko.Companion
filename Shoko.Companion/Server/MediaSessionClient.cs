@@ -183,6 +183,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         {
             Logger.Warn(error, "MediaSession: Connection closed");
             ConnectionStateChanged?.Invoke(false);
+            var _ = _coordinator.ShowOsdTextAsync("Disconnected from Media Session API");
         };
 
         _connection.Reconnecting += _ =>
@@ -196,6 +197,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             Logger.Info("MediaSession: Reconnected, reconnecting session...");
             await ReconnectSessionOrRegisterAsync();
             ConnectionStateChanged?.Invoke(true);
+            var __ = _coordinator.ShowOsdTextAsync("Reconnected to Media Session API");
         };
 
         try
@@ -204,6 +206,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             Logger.Info("MediaSession: Connected to hub");
             await ReconnectSessionOrRegisterAsync();
             ConnectionStateChanged?.Invoke(true);
+            var _ = _coordinator.ShowOsdTextAsync("Connected to Media Session API");
         }
         catch (Exception ex)
         {
@@ -390,7 +393,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         var s = SettingsProvider.Instance.Settings;
         var privacyOverrideControl = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteControl;
         var privacyOverrideScreenshot = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteScreenshots;
-        
+
         return new SessionCapabilitiesDto
         {
             CanPlay = s.AllowRemotePlay && !privacyOverrideControl,
