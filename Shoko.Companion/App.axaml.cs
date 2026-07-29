@@ -30,7 +30,7 @@ public partial class App : Application
 
     private TrayIcon? _trayIcon;
     private IPlaybackCoordinator? _coordinator;
-    private NativeMenuItem? _discordMenuItem;
+    private NativeMenuItem? _privacyMenuItem;
     private NativeMenuItem? _openWebUiMenuItem;
     /// <summary>
     /// Gets the current Media Session client, or null if not connected.
@@ -164,23 +164,12 @@ public partial class App : Application
 
         menu.Add(new NativeMenuItemSeparator());
 
-        _discordMenuItem = new NativeMenuItem(
-            SettingsProvider.Instance.Settings.DiscordEnabled
-                ? "Disable Discord Presence"
-                : "Enable Discord Presence");
-        _discordMenuItem.Click += OnTrayToggleDiscordClick;
-        _discordMenuItem.IsEnabled = SettingsProvider.Instance.Settings.CanUseDiscord;
-        menu.Add(_discordMenuItem);
-
-        menu.Add(new NativeMenuItemSeparator());
-
-        var registerScheme = new NativeMenuItem("Register URL Scheme");
-        registerScheme.Click += OnTrayRegisterSchemeClick;
-        menu.Add(registerScheme);
-
-        var unregisterScheme = new NativeMenuItem("Unregister URL Scheme");
-        unregisterScheme.Click += OnTrayUnregisterSchemeClick;
-        menu.Add(unregisterScheme);
+        _privacyMenuItem = new NativeMenuItem(
+            SettingsProvider.Instance.Settings.PrivacyMode
+                ? "Disable Privacy Mode"
+                : "Enable Privacy Mode");
+        _privacyMenuItem.Click += OnTrayTogglePrivacyClick;
+        menu.Add(_privacyMenuItem);
 
         menu.Add(new NativeMenuItemSeparator());
 
@@ -235,16 +224,16 @@ public partial class App : Application
         }
     }
 
-    private void OnTrayToggleDiscordClick(object? sender, EventArgs args)
+    private void OnTrayTogglePrivacyClick(object? sender, EventArgs args)
     {
         var settings = SettingsProvider.Instance.Settings;
-        settings.DiscordEnabled = !settings.DiscordEnabled;
+        settings.PrivacyMode = !settings.PrivacyMode;
         SettingsProvider.Instance.Save();
 
-        if (_discordMenuItem is not null)
-            _discordMenuItem.Header = settings.DiscordEnabled
-                ? "Disable Discord Presence"
-                : "Enable Discord Presence";
+        if (_privacyMenuItem is not null)
+            _privacyMenuItem.Header = settings.PrivacyMode
+                ? "Disable Privacy Mode"
+                : "Enable Privacy Mode";
     }
 
     private void OnTraySettingsClick(object? sender, EventArgs args)
@@ -486,17 +475,20 @@ public partial class App : Application
             _ => "Idle",
         };
 
+        var sSettings = SettingsProvider.Instance.Settings;
+        var hideInfo = sSettings.EffectivePrivacyMode && sSettings.PrivacyModeHideMediaPlaybackInfo;
+
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            FileId = _coordinator!.CurrentFileId,
-            VideoId = _coordinator!.CurrentFileId,
-            Title = _coordinator!.CurrentTitle,
+            FileId = hideInfo ? null : _coordinator!.CurrentFileId,
+            VideoId = hideInfo ? null : _coordinator!.CurrentFileId,
+            Title = hideInfo ? null : _coordinator!.CurrentTitle,
             Position = TimeSpan.FromSeconds(_coordinator!.CurrentPositionSeconds),
             Duration = _coordinator!.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value)
                 : null,
-            StreamUrl = _coordinator!.CurrentStreamUrl,
+            StreamUrl = hideInfo ? null : _coordinator!.CurrentStreamUrl,
             IsPaused = args.NewState == PlaybackState.Paused,
         });
     }
@@ -517,15 +509,18 @@ public partial class App : Application
             _ => "Idle",
         };
 
+        var sSettings2 = SettingsProvider.Instance.Settings;
+        var hideInfo2 = sSettings2.EffectivePrivacyMode && sSettings2.PrivacyModeHideMediaPlaybackInfo;
+
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            FileId = _coordinator!.CurrentFileId,
-            VideoId = _coordinator!.CurrentFileId,
-            Title = _coordinator!.CurrentTitle,
+            FileId = hideInfo2 ? null : _coordinator!.CurrentFileId,
+            VideoId = hideInfo2 ? null : _coordinator!.CurrentFileId,
+            Title = hideInfo2 ? null : _coordinator!.CurrentTitle,
             Position = position,
             Duration = _coordinator!.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value) : null,
-            StreamUrl = _coordinator!.CurrentStreamUrl,
+            StreamUrl = hideInfo2 ? null : _coordinator!.CurrentStreamUrl,
             IsPaused = state == "Paused",
         });
     }

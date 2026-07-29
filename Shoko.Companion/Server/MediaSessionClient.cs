@@ -388,14 +388,17 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private SessionCapabilitiesDto BuildCurrentCapabilities()
     {
         var s = SettingsProvider.Instance.Settings;
+        var privacyOverrideControl = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteControl;
+        var privacyOverrideScreenshot = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteScreenshots;
+        
         return new SessionCapabilitiesDto
         {
-            CanPlay = s.AllowRemotePlay,
-            CanResumeOrPause = _hasActivePlayback,
-            CanSeek = _hasActivePlayback,
-            CanStop = _hasActivePlayback,
+            CanPlay = s.AllowRemotePlay && !privacyOverrideControl,
+            CanResumeOrPause = _hasActivePlayback && !privacyOverrideControl,
+            CanSeek = _hasActivePlayback && !privacyOverrideControl,
+            CanStop = _hasActivePlayback && !privacyOverrideControl,
             CanReportState = _hasActivePlayback,
-            CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback,
+            CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
         };
     }
 

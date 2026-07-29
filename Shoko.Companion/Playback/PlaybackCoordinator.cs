@@ -59,6 +59,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private Timer? _idleTimer;
     private DateTime? _idleStartTime;
     private int _pendingPlaylistEntries;
+    private bool _lastPrivacyMode;
+    private bool _lastEffectivePrivacyMode;
 
     // Stream selection carryover (languages last deliberately chosen by the user)
     private string? _carryoverAudioLang;
@@ -135,6 +137,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _notifications = PlatformNotificationService.Instance;
         _discord = new DiscordPresenceService();
         _sessionManager = new PlaybackSessionManager();
+
+        _lastPrivacyMode = SettingsProvider.Instance.Settings.PrivacyMode;
+        _lastEffectivePrivacyMode = SettingsProvider.Instance.Settings.EffectivePrivacyMode;
+        SettingsProvider.Instance.SettingsChanged += OnPrivacySettingsChanged;
 
         WireMpvEvents();
         WireSessionManagerEvents();
@@ -376,6 +382,22 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // Discord presence will be set by the session manager on first event
             EnsureDiscordInitialized();
 
+            // Set up mpv keybinding for privacy toggle
+            var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
+            if (!string.IsNullOrWhiteSpace(privacyKey))
+            {
+                try
+                {
+                    await _mpv.SendCommandAsync("keybind",
+                        [privacyKey, $"no-osd script-message shoko-companion-toggle-privacy"]);
+                    Logger.Info("Registered mpv keybinding for privacy toggle: {Key}", privacyKey);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn(ex, "Failed to register mpv keybinding for privacy toggle");
+                }
+            }
+
             SetState(PlaybackState.Loading);
         }
         catch (Exception ex)
@@ -498,6 +520,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         // Send final stop scrobble via session manager
         var endPosition = _sessionManager.CurrentPositionMs;
         _sessionManager.EndSession(endPosition);
+        CheckRestrictedPrivacyTransition();
 
         _sessionFileId = null;
         await _mpv.StopAsync();
@@ -546,6 +569,20 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         if (_state is not (PlaybackState.Playing or PlaybackState.Paused))
             return null;
 
+        var behavior = SettingsProvider.Instance.Settings.ScreenshotSubtitleBehavior;
+        var hideSubs = behavior switch
+        {
+            Configuration.ScreenshotSubtitleBehavior.Always => true,
+            Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused => _state == PlaybackState.Paused,
+            _ => false,
+        };
+
+        if (hideSubs)
+        {
+            try { await _mpv.SetPropertyAsync("sub-visibility", false); }
+            catch (Exception ex) { Logger.Debug(ex, "Failed to hide subtitles before screenshot"); }
+        }
+
         var tempPath = Path.GetTempFileName() + ".png";
         try
         {
@@ -563,6 +600,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         }
         finally
         {
+            if (hideSubs)
+            {
+                try { await _mpv.SetPropertyAsync("sub-visibility", true); }
+                catch (Exception ex) { Logger.Debug(ex, "Failed to restore subtitle visibility after screenshot"); }
+            }
+
             try
             {
                 if (File.Exists(tempPath))
@@ -689,6 +732,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 _sessionManager.OnNextFile(fileId, 0, _duration, isRestricted,
                     meta.AnimeName, epName, meta.EpisodeNumber, 0, meta.EpisodeCount,
                     meta.PosterUrl, meta.AnimeId, nextEpIds);
+                CheckRestrictedPrivacyTransition();
             }
         }
         else
@@ -710,6 +754,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 _sessionManager.OnNextFile(fileId, 0, _duration, isRestricted,
                     seriesTitle, episodeTitle, epNo, 0, epCount,
                     posterUrl, animeId);
+                CheckRestrictedPrivacyTransition();
             }
         }
     }
@@ -840,6 +885,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     {
         switch (args.Event)
         {
+            case "client-message":
+                if (args.Data is Newtonsoft.Json.Linq.JArray msgArgs
+                    && msgArgs.Count > 0
+                    && msgArgs[0]?.ToString() == "shoko-companion-toggle-privacy")
+                {
+                    Logger.Info("mpv keybinding triggered — toggling privacy mode");
+                    var settings = SettingsProvider.Instance.Settings;
+                    settings.PrivacyMode = !settings.PrivacyMode;
+                    SettingsProvider.Instance.Save();
+                }
+                break;
+
             case "file-loaded":
                 Logger.Info("File loaded in mpv");
                 await Task.Delay(FileLoadedDelayMs);
@@ -896,6 +953,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                             seriesTitle, episodeTitle, epNumber, 0, epCount,
                             posterUrl, animeId, epIds
                         );
+
+                        CheckRestrictedPrivacyTransition();
 
                         // If mpv was launched paused, the initial pause=true
                         // observer event fired before StartSession. Transition
@@ -978,6 +1037,63 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         }
     }
 
+    private async void OnPrivacySettingsChanged(CompanionSettings settings)
+    {
+        // Manual toggle via tray/settings/keybinding: PrivacyMode changed
+        if (settings.PrivacyMode != _lastPrivacyMode)
+        {
+            _lastPrivacyMode = settings.PrivacyMode;
+            _lastEffectivePrivacyMode = settings.EffectivePrivacyMode;
+            var msg = settings.PrivacyMode ? "Privacy Mode: Enabled" : "Privacy Mode: Disabled";
+            await ShowOsdTextAsync(msg);
+            return;
+        }
+
+        // Auto transition (restricted content start/end): EffectivePrivacyMode changed
+        var effective = settings.EffectivePrivacyMode;
+        if (effective != _lastEffectivePrivacyMode)
+        {
+            _lastEffectivePrivacyMode = effective;
+            var msg = effective
+                ? "Privacy Mode: Enabled (restricted content)"
+                : "Privacy Mode: Disabled (restricted content)";
+            await ShowOsdTextAsync(msg);
+        }
+    }
+
+    /// <summary>
+    ///   Show a text message on the mpv OSD, if mpv is connected.
+    /// </summary>
+    public async Task ShowOsdTextAsync(string text, int durationMs = 3000)
+    {
+        if (!_mpv.IsConnected) return;
+        try
+        {
+            await _mpv.SendCommandAsync("show-text", [text, durationMs.ToString()]);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Failed to show mpv OSD text");
+        }
+    }
+
+    /// <summary>
+    ///   Check if effective privacy mode changed (e.g. due to restricted content
+    ///   starting or ending) and show an OSD message if so.
+    /// </summary>
+    private void CheckRestrictedPrivacyTransition()
+    {
+        var effective = SettingsProvider.Instance.Settings.EffectivePrivacyMode;
+        if (effective == _lastEffectivePrivacyMode)
+            return;
+
+        _lastEffectivePrivacyMode = effective;
+        var msg = effective
+            ? "Privacy Mode: Enabled (restricted content)"
+            : "Privacy Mode: Disabled (restricted content)";
+        _ = ShowOsdTextAsync(msg);
+    }
+
     private async Task OnMpvDisconnected(object? sender, EventArgs e)
     {
         Logger.Info("mpv disconnected — assuming user closed the player");
@@ -1012,7 +1128,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
     private async void OnSessionScrobbleRequested(object? sender, ScrobbleRequestEventArgs e)
     {
-        if (!SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
+        var s = SettingsProvider.Instance.Settings;
+        if (!s.PlaybackSyncingEnabled || (s.EffectivePrivacyMode && s.PrivacyModeDisablePlaybackEvents))
             return;
 
         try

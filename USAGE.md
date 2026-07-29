@@ -176,12 +176,19 @@ Logs are under `logs/` — handy when troubleshooting.
 | `OnNewUrlAction` | string | `"Append"` | `"Replace"` / `"Ignore"` / `"Append"` when a new URL arrives while playing. |
 | `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing. |
 | `LivePlaybackSyncingEnabled` | bool | `false` | Periodic position updates (requires `PlaybackSyncingEnabled`). |
-| `SkipRestrictedContent` | bool | `true` | Skip playback event syncing for restricted content. |
+| `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` / `Always`. |
+| `PrivacyModeForRestrictedContent` | bool | `false` | Auto-activate privacy mode for restricted content. |
 | `ScrobbleIntervalMs` | int | `10000` | Progress update interval in ms (min 5000). |
 | `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |
 | `DiscordIdlePresence` | bool | `false` | Show "Browsing" → "Idle" presence when not playing. |
-| `DiscordPrivacyMode` | bool | `false` | Hide anime title and poster from Discord presence. |
+| `PrivacyMode` | bool | `false` | Global privacy mode master switch. |
+| `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence (was `DiscordPrivacyMode`). |
+| `PrivacyModeHideMediaPlaybackInfo` | bool | `false` | Strip title/file info from Media Session hub state. |
+| `PrivacyModeDisableRemoteControl` | bool | `false` | Disallow remote Play/Pause/Seek/Stop via Media Session. |
+| `PrivacyModeDisableRemoteScreenshots` | bool | `false` | Disallow remote screenshot capture via Media Session. |
+| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable scrobble/sync to Shoko server. |
+| `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. |
 | `AlwaysUseConfiguredRoutes` | bool | `false` | Skip direct URL check; always use connection route table. |
 | `LogLevel` | string | `"Info"` | One of: Trace, Debug, Info, Warn, Error. |
 

@@ -104,7 +104,22 @@ Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
 - `PlaybackSyncingEnabled` — master toggle for scrobbling (default `true`)
 - `LivePlaybackSyncingEnabled` — periodic position updates (default `false`)
 - `SkipRestrictedContent` — skip scrobbling for adult content (default `true`)
-- `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`, `DiscordPrivacyMode`
+- `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`
+- `PrivacyModeHideDiscord` (replaces `DiscordPrivacyMode`)
+
+## Privacy Mode
+
+Global privacy mode with per-feature sub-toggles. Settings in `CompanionSettings`:
+
+- `PrivacyMode` — master switch. When OFF, sub-toggles have no effect and individual feature toggles control behavior independently.
+- `PrivacyModeHideDiscord` — hide title/poster from Discord (replaces `DiscordPrivacyMode`)
+- `PrivacyModeHideMediaPlaybackInfo` — strip title/file info from Media Session hub state
+- `PrivacyModeDisableRemoteControl` — deny remote Play/Pause/Seek/Stop via Media Session API
+- `PrivacyModeDisableRemoteScreenshots` — deny remote screenshot capture via Media Session API
+- `PrivacyModeDisablePlaybackEvents` — block all scrobbling to Shoko server
+- `PrivacyModeForRestrictedContent` — auto-activate privacy mode for restricted (adult) content
+- `PrivacyModeMpvKeybinding` — mpv key combo to toggle privacy during playback (default `Ctrl+p`, no Lua scripts needed)
+- `ScreenshotSubtitleBehavior` — subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` (default) / `Always`
 - `MediaSessionAutoConnectId` — Guid of the connection to auto-connect for Media Session API (null = none)
 - `LogLevel` — Trace/Debug/Info/Warn/Error
 - `UrlSchemeRegistrationAsked` — one-time prompt flag

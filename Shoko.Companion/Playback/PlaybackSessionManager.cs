@@ -129,12 +129,14 @@ public class PlaybackSessionManager
             ImdbMovie = episodeIds?.ImdbMovie,
         };
 
-        if (settings.LivePlaybackSyncingEnabled && settings.PlaybackSyncingEnabled)
+        if (settings.LivePlaybackSyncingEnabled && settings.PlaybackSyncingEnabled
+            && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
         {
             _scrobbleTimer = new Timer(OnScrobbleTimer, null, ScrobbleIntervalMs, ScrobbleIntervalMs);
             Logger.Debug("Live scrobble timer started: interval={Interval}ms", ScrobbleIntervalMs);
         }
 
+        SettingsProvider.Instance.Settings.RestrictedContentPlaying = isRestricted;
         EmitDiscordPresence();
     }
 
@@ -257,23 +259,22 @@ public class PlaybackSessionManager
 
         Logger.Info("Session ended at {Pos:F0}ms (dur={Dur:F0}ms, watched={Watched}, eof={Eof}, sendStop={SendStop})",
             position, _session?.DurationMs ?? 0, watched, _session?.EofReached, shouldSendStop);
+        SettingsProvider.Instance.Settings.RestrictedContentPlaying = false;
         _session = null;
 
-        if (shouldSendStop && SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
+        var sStop = SettingsProvider.Instance.Settings;
+        if (shouldSendStop && sStop.PlaybackSyncingEnabled && !(sStop.EffectivePrivacyMode && sStop.PrivacyModeDisablePlaybackEvents))
         {
-            if (!isRestricted || !SettingsProvider.Instance.Settings.SkipRestrictedContent)
+            Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
             {
-                Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
-                {
-                    FileId = fileId,
-                    EventType = ScrobbleEventType.PlaybackEnd,
-                    Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
-                    IsWatched = watched,
-                    VideoStreamId = videoStreamId,
-                    AudioStreamId = audioStreamId,
-                    SubtitleStreamId = subtitleStreamId
-                }));
-            }
+                FileId = fileId,
+                EventType = ScrobbleEventType.PlaybackEnd,
+                Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
+                IsWatched = watched,
+                VideoStreamId = videoStreamId,
+                AudioStreamId = audioStreamId,
+                SubtitleStreamId = subtitleStreamId
+            }));
         }
 
         DiscordPresenceChanged?.Invoke(this, null);
@@ -292,10 +293,8 @@ public class PlaybackSessionManager
         if (_session is null)
             return;
 
-        if (!SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
-            return;
-
-        if (_session.IsRestricted && SettingsProvider.Instance.Settings.SkipRestrictedContent)
+        var sFinal = SettingsProvider.Instance.Settings;
+        if (!sFinal.PlaybackSyncingEnabled || (sFinal.EffectivePrivacyMode && sFinal.PrivacyModeDisablePlaybackEvents))
             return;
 
         // Determine watched: either EOF was hit, or position >= 97.5% of duration
@@ -343,6 +342,7 @@ public class PlaybackSessionManager
         _session.InitialPositionMs = resumePositionMs;
         _session.DurationMs = durationMs;
         _session.IsRestricted = isRestricted;
+        SettingsProvider.Instance.Settings.RestrictedContentPlaying = isRestricted;
         _session.SeriesTitle = seriesTitle;
         _session.EpisodeTitle = episodeTitle;
         _session.EpisodeNumber = epNumber;
@@ -422,10 +422,11 @@ public class PlaybackSessionManager
         if (_session is null)
             return;
 
-        if (!SettingsProvider.Instance.Settings.PlaybackSyncingEnabled)
+        var sEvt = SettingsProvider.Instance.Settings;
+        if (!sEvt.PlaybackSyncingEnabled)
             return;
 
-        if (_session.IsRestricted && SettingsProvider.Instance.Settings.SkipRestrictedContent)
+        if (sEvt.EffectivePrivacyMode && sEvt.PrivacyModeDisablePlaybackEvents)
             return;
 
         Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
@@ -446,7 +447,7 @@ public class PlaybackSessionManager
         }
 
         var settings = SettingsProvider.Instance.Settings;
-        var privacy = settings.DiscordPrivacyMode;
+        var privacy = settings.EffectivePrivacyMode && settings.PrivacyModeHideDiscord;
         var buttons = BuildButtons(settings);
 
         if (privacy)

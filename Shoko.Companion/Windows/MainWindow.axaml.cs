@@ -8,11 +8,12 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using NLog;
 using Shoko.Companion.Configuration;
+using Shoko.Companion.Launch;
 using Shoko.Companion.Mpv;
+using Shoko.Companion.Notifications;
 using Shoko.Companion.Server;
 #if DEBUG
 using Shoko.Companion.Discord;
-using Shoko.Companion.Notifications;
 #endif
 
 namespace Shoko.Companion.Windows;
@@ -214,10 +215,17 @@ public partial class MainWindow : Window
         var s = SettingsProvider.Instance.Settings;
         MpvPathBox.Text = s.MpvPath ?? string.Empty;
 
+        PrivacyModeCheck.IsChecked = s.PrivacyMode;
+        PrivacyModeHideDiscordCheck.IsChecked = s.PrivacyModeHideDiscord;
+        PrivacyModeHideMediaPlaybackInfoCheck.IsChecked = s.PrivacyModeHideMediaPlaybackInfo;
+        PrivacyModeDisableRemoteControlCheck.IsChecked = s.PrivacyModeDisableRemoteControl;
+        PrivacyModeDisableRemoteScreenshotsCheck.IsChecked = s.PrivacyModeDisableRemoteScreenshots;
+        PrivacyModeDisablePlaybackEventsCheck.IsChecked = s.PrivacyModeDisablePlaybackEvents;
+        PrivacyModeMpvKeybindingBox.Text = s.PrivacyModeMpvKeybinding ?? string.Empty;
+
         DiscordEnabledCheck.IsChecked = s.DiscordEnabled;
         DiscordClientIdBox.Text = s.DiscordClientIdOverride ?? string.Empty;
         DiscordIdlePresenceCheck.IsChecked = s.DiscordIdlePresence;
-        DiscordPrivacyModeCheck.IsChecked = s.DiscordPrivacyMode;
         ResetDiscordClientIdButton.Click += (_, _) => DiscordClientIdBox.Text = string.Empty;
 
         MpvFullScreenCheck.IsChecked = s.MpvFullScreen;
@@ -244,7 +252,7 @@ public partial class MainWindow : Window
         };
         PlaybackSyncingCheck.IsChecked = s.PlaybackSyncingEnabled;
         LivePlaybackSyncingCheck.IsChecked = s.LivePlaybackSyncingEnabled;
-        SkipRestrictedCheck.IsChecked = s.SkipRestrictedContent;
+        PrivacyModeForRestrictedCheck.IsChecked = s.PrivacyModeForRestrictedContent;
         AlwaysUseRoutesCheck.IsChecked = s.AlwaysUseConfiguredRoutes;
 
         // Set the log level combo to the saved value
@@ -345,10 +353,19 @@ public partial class MainWindow : Window
         s.MpvPath = string.IsNullOrWhiteSpace(MpvPathBox.Text) ? null : MpvPathBox.Text.Trim();
         s.MpvFullScreen = MpvFullScreenCheck.IsChecked == true;
         s.MpvStartPaused = MpvStartPausedCheck.IsChecked == true;
+        s.PrivacyMode = PrivacyModeCheck.IsChecked == true;
+        s.PrivacyModeHideDiscord = PrivacyModeHideDiscordCheck.IsChecked == true;
+        s.PrivacyModeHideMediaPlaybackInfo = PrivacyModeHideMediaPlaybackInfoCheck.IsChecked == true;
+        s.PrivacyModeDisableRemoteControl = PrivacyModeDisableRemoteControlCheck.IsChecked == true;
+        s.PrivacyModeDisableRemoteScreenshots = PrivacyModeDisableRemoteScreenshotsCheck.IsChecked == true;
+        s.PrivacyModeDisablePlaybackEvents = PrivacyModeDisablePlaybackEventsCheck.IsChecked == true;
+        s.PrivacyModeMpvKeybinding = string.IsNullOrWhiteSpace(PrivacyModeMpvKeybindingBox.Text)
+            ? "Ctrl+p"
+            : PrivacyModeMpvKeybindingBox.Text.Trim();
+
         s.DiscordEnabled = DiscordEnabledCheck.IsChecked == true;
         s.DiscordClientIdOverride = string.IsNullOrWhiteSpace(DiscordClientIdBox.Text) ? null : DiscordClientIdBox.Text.Trim();
         s.DiscordIdlePresence = DiscordIdlePresenceCheck.IsChecked == true;
-        s.DiscordPrivacyMode = DiscordPrivacyModeCheck.IsChecked == true;
 
         s.OnNewUrlAction = OnNewUrlCombo.SelectedIndex switch
         {
@@ -359,7 +376,7 @@ public partial class MainWindow : Window
         };
         s.PlaybackSyncingEnabled = PlaybackSyncingCheck.IsChecked == true;
         s.LivePlaybackSyncingEnabled = LivePlaybackSyncingCheck.IsChecked == true;
-        s.SkipRestrictedContent = SkipRestrictedCheck.IsChecked == true;
+        s.PrivacyModeForRestrictedContent = PrivacyModeForRestrictedCheck.IsChecked == true;
         s.AlwaysUseConfiguredRoutes = AlwaysUseRoutesCheck.IsChecked == true;
 
         s.RestoreVolume = RestoreVolumeCheck.IsChecked == true;
@@ -371,6 +388,13 @@ public partial class MainWindow : Window
         // Media Session auto-connect
         s.AllowRemotePlay = AllowRemotePlayCheck.IsChecked == true;
         s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
+        s.ScreenshotSubtitleBehavior = ScreenshotSubtitleCombo.SelectedIndex switch
+        {
+            0 => Configuration.ScreenshotSubtitleBehavior.Disabled,
+            1 => Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused,
+            2 => Configuration.ScreenshotSubtitleBehavior.Always,
+            _ => Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused,
+        };
         if (MediaSessionConnectionCombo.SelectedItem is MediaSessionConnectionItem msItem && msItem.Id != Guid.Empty)
             s.MediaSessionAutoConnectId = msItem.Id;
         else
@@ -413,6 +437,13 @@ public partial class MainWindow : Window
 
         AllowRemotePlayCheck.IsChecked = s.AllowRemotePlay;
         AllowRemoteScreenshotCheck.IsChecked = s.AllowRemoteScreenshot;
+        ScreenshotSubtitleCombo.SelectedIndex = s.ScreenshotSubtitleBehavior switch
+        {
+            Configuration.ScreenshotSubtitleBehavior.Disabled => 0,
+            Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused => 1,
+            Configuration.ScreenshotSubtitleBehavior.Always => 2,
+            _ => 1,
+        };
 
         MediaSessionConnectionCombo.ItemsSource = items;
 
@@ -502,6 +533,34 @@ public partial class MainWindow : Window
     private void OnRefreshMediaSessionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         LoadMediaSessionSection();
+    }
+
+    private void OnRegisterUrlSchemeClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        try
+        {
+            UrlSchemeRegistrar.Register();
+            PlatformNotificationService.Instance
+                .Show("Shoko Companion", "Registered the shoko:// URL scheme.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "Failed to register the shoko:// URL scheme");
+        }
+    }
+
+    private void OnUnregisterUrlSchemeClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        try
+        {
+            UrlSchemeRegistrar.Unregister();
+            PlatformNotificationService.Instance
+                .Show("Shoko Companion", "Unregistered the shoko:// URL scheme.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "Failed to unregister the shoko:// URL scheme");
+        }
     }
 }
 

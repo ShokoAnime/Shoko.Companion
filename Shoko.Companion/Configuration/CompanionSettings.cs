@@ -89,12 +89,6 @@ public class CompanionSettings
     public Discord.DiscordButtonSource DiscordButton2 { get; set; } = Discord.DiscordButtonSource.Disabled;
 
     /// <summary>
-    /// When true, hides the anime title and poster image from Discord presence.
-    /// Shows generic "Watching Anime" with episode info only.
-    /// </summary>
-    public bool DiscordPrivacyMode { get; set; }
-
-    /// <summary>
     /// The effective Discord client ID — prefers a user override, falls back to the built-in default.
     /// </summary>
     [JsonIgnore]
@@ -105,6 +99,66 @@ public class CompanionSettings
     /// </summary>
     [JsonIgnore]
     public bool CanUseDiscord => DiscordEnabled && !string.IsNullOrWhiteSpace(DiscordClientId);
+
+    // ── Privacy Mode ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Global master switch for privacy mode. When enabled, the sub-toggles
+    /// below determine which features are restricted. When disabled, all
+    /// sub-toggles are ignored and individual feature toggles control behavior.
+    /// </summary>
+    public bool PrivacyMode { get; set; }
+
+    /// <summary>
+    /// When privacy mode is active, hides the anime title and poster image
+    /// from Discord presence. Shows generic "Watching Anime" instead.
+    /// Replaces the old <c>DiscordPrivacyMode</c> setting.
+    /// </summary>
+    public bool PrivacyModeHideDiscord { get; set; }
+
+    /// <summary>
+    /// When privacy mode is active, strips identifying media information
+    /// (title, stream URL, file ID, thumbnail) from the state reported to
+    /// the Media Session hub. Basic playback state (Playing/Paused/Stopped)
+    /// and position/duration are still reported.
+    /// </summary>
+    public bool PrivacyModeHideMediaPlaybackInfo { get; set; }
+
+    /// <summary>
+    /// When privacy mode is active, disallows remote clients from starting,
+    /// pausing, resuming, seeking, or stopping playback via the Media
+    /// Session API. Overrides <see cref="AllowRemotePlay"/>.
+    /// </summary>
+    public bool PrivacyModeDisableRemoteControl { get; set; }
+
+    /// <summary>
+    /// When privacy mode is active, disallows remote clients from capturing
+    /// screenshots via the Media Session API.
+    /// Overrides <see cref="AllowRemoteScreenshot"/>.
+    /// </summary>
+    public bool PrivacyModeDisableRemoteScreenshots { get; set; }
+
+    /// <summary>
+    /// When privacy mode is active, disables all playback event syncing
+    /// (scrobbling) to the Shoko server.
+    /// Overrides <see cref="PlaybackSyncingEnabled"/>.
+    /// </summary>
+    public bool PrivacyModeDisablePlaybackEvents { get; set; }
+
+    /// <summary>
+    /// The mpv keybinding used to toggle privacy mode during playback.
+    /// Sent as a <c>keybind</c> command over JSON IPC when mpv connects.
+    /// Format follows mpv's input.conf syntax (e.g. <c>Ctrl+p</c>).
+    /// </summary>
+    public string PrivacyModeMpvKeybinding { get; set; } = "Ctrl+p";
+
+    /// <summary>
+    /// Controls whether mpv subtitles are hidden before capturing a screenshot.
+    /// <c>OnlyWhenPaused</c> (default) avoids visual flicker during active playback.
+    /// </summary>
+    public ScreenshotSubtitleBehavior ScreenshotSubtitleBehavior { get; set; } = Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused;
+
+    // ── Media Session API ───────────────────────────────────────────────
 
     /// <summary>
     /// The GUID of the server connection to auto-connect for the
@@ -177,9 +231,27 @@ public class CompanionSettings
     public int SyncUserDataLiveScrobbleTickThreshold { get; set; } = 6;
 
     /// <summary>
-    /// When true, skips syncing for restricted (adult) content.
+    /// When privacy mode is active and <see cref="PrivacyModeForRestrictedContent"/>
+    /// is also active, restricted content auto-triggers privacy mode using the
+    /// configured sub-toggles. The transient <see cref="RestrictedContentPlaying"/>
+    /// flag is managed by the session manager.
     /// </summary>
-    public bool SkipRestrictedContent { get; set; } = true;
+    [JsonIgnore]
+    public bool EffectivePrivacyMode => PrivacyMode || (RestrictedContentPlaying && PrivacyModeForRestrictedContent);
+
+    /// <summary>
+    /// Transient flag set by the playback session manager. True when the current
+    /// playback session contains restricted (adult) content.
+    /// </summary>
+    [JsonIgnore]
+    public bool RestrictedContentPlaying { get; set; }
+
+    /// <summary>
+    /// When true, restricted content automatically enables privacy mode using
+    /// the configured sub-toggles. The session manager sets
+    /// <see cref="RestrictedContentPlaying"/> when restricted content plays.
+    /// </summary>
+    public bool PrivacyModeForRestrictedContent { get; set; }
 
     /// <summary>
     /// NLog log level (Trace, Debug, Info, Warn, Error).

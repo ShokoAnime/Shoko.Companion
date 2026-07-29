@@ -93,4 +93,12 @@ public interface IPlaybackCoordinator
     ///   if capture fails or no video is loaded.
     /// </summary>
     Task<byte[]?> CaptureScreenshotAsync();
+
+    /// <summary>
+    ///   Show a text message on the mpv OSD, if mpv is connected.
+    ///   No-op when mpv is not running or disconnected.
+    /// </summary>
+    /// <param name="text">The message to display.</param>
+    /// <param name="durationMs">Display duration in milliseconds (default 3000).</param>
+    Task ShowOsdTextAsync(string text, int durationMs = 3000);
 }

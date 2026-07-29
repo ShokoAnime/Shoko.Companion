@@ -46,6 +46,43 @@
                 <Button Name="ManageFoldersButton" Content="Manage Folders…"
                         Click="OnManageFoldersClick" HorizontalAlignment="Left" Margin="0,4,0,0"/>
 
+                <!-- === Privacy Mode === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Privacy Mode" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Global privacy mode. When enabled, the sub-toggles below control what gets restricted. When disabled, individual feature toggles behave independently."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <CheckBox Name="PrivacyModeCheck" Content="Enable Privacy Mode"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <StackPanel Name="PrivacySubTogglesPanel" Spacing="6">
+                    <CheckBox Name="PrivacyModeHideDiscordCheck"
+                              Content="Hide Discord presence info"
+                              IsCheckedChanged="OnAutoSaveSetting"/>
+                    <CheckBox Name="PrivacyModeHideMediaPlaybackInfoCheck"
+                              Content="Hide Media Session playback info"
+                              IsCheckedChanged="OnAutoSaveSetting"/>
+                    <CheckBox Name="PrivacyModeDisableRemoteControlCheck"
+                              Content="Disable remote playback control"
+                              IsCheckedChanged="OnAutoSaveSetting"/>
+                    <CheckBox Name="PrivacyModeDisableRemoteScreenshotsCheck"
+                              Content="Disable remote screenshots"
+                              IsCheckedChanged="OnAutoSaveSetting"/>
+                    <CheckBox Name="PrivacyModeDisablePlaybackEventsCheck"
+                              Content="Disable playback event syncing (scrobbling)"
+                              IsCheckedChanged="OnAutoSaveSetting"/>
+                </StackPanel>
+
+                <Grid ColumnDefinitions="Auto,*" Margin="0,4,0,0">
+                    <TextBlock Text="mpv toggle key:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Name="PrivacyModeMpvKeybindingBox" Grid.Column="1"
+                             Watermark="Ctrl+p"
+                             TextChanged="OnAutoSaveSetting"/>
+                </Grid>
+                <CheckBox Name="PrivacyModeForRestrictedCheck"
+                          Content="Always use privacy mode for restricted content"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
                 <!-- === Playback Events === -->
                 <Separator Margin="0,4"/>
                 <TextBlock Text="Playback Events" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
@@ -55,10 +92,6 @@
                 <CheckBox Name="LivePlaybackSyncingCheck" Content="Live playback syncing"
                           IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
                           IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="SkipRestrictedCheck" Content="Skip restricted content"
-                          IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-
                 <!-- === Media Session API === -->
                 <Separator Margin="0,4"/>
                 <TextBlock Text="Media Session API" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
@@ -69,6 +102,15 @@
                           IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
                           IsCheckedChanged="OnAutoSaveSetting"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Subtitles on screenshot:" VerticalAlignment="Center"/>
+                    <ComboBox Name="ScreenshotSubtitleCombo" Width="160" HorizontalAlignment="Left"
+                              SelectionChanged="OnAutoSaveSetting">
+                        <ComboBoxItem>Disabled</ComboBoxItem>
+                        <ComboBoxItem>Only when paused</ComboBoxItem>
+                        <ComboBoxItem>Always</ComboBoxItem>
+                    </ComboBox>
+                </StackPanel>
 
                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
                     <TextBlock Text="Auto-connect connection:" Grid.Row="0" Grid.ColumnSpan="2"/>
@@ -144,9 +186,6 @@
                 <CheckBox Name="DiscordIdlePresenceCheck" Content="Show idle presence when not playing"
                           IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
                           IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="DiscordPrivacyModeCheck" Content="Privacy mode (hide anime title and poster)"
-                          IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
 
                 <!-- === Logging === -->
                 <Separator Margin="0,4"/>
@@ -162,6 +201,18 @@
                     <ComboBoxItem Content="Warn"/>
                     <ComboBoxItem Content="Error"/>
                 </ComboBox>
+
+                <!-- === URL Scheme === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="URL Scheme" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Register or unregister the shoko:// URL scheme to let your browser open Shoko links in this app."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                    <Button Name="RegisterUrlSchemeButton" Content="Register"
+                            Click="OnRegisterUrlSchemeClick" MinWidth="80"/>
+                    <Button Name="UnregisterUrlSchemeButton" Content="Unregister"
+                            Click="OnUnregisterUrlSchemeClick" MinWidth="80"/>
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>

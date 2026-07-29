@@ -112,7 +112,15 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |
 | `DiscordIdlePresence` | bool | `false` | Show "Browsing" → "Idle" presence when nothing is playing. |
-| `DiscordPrivacyMode` | bool | `false` | Hide anime title and poster from Discord presence; show generic "Watching Anime" instead. |
+| `PrivacyMode` | bool | `false` | Global privacy mode master switch. When enabled, sub-toggles below restrict what is shared. When disabled, individual feature toggles control behavior independently. |
+| `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence; show generic "Watching Anime" instead. Only effective when `PrivacyMode` is true. |
+| `PrivacyModeHideMediaPlaybackInfo` | bool | `false` | Strip title, stream URL, file ID, and thumbnail from Media Session hub state. Basic state (Playing/Paused) and position/duration still reported. |
+| `PrivacyModeDisableRemoteControl` | bool | `false` | Disallow remote Play/Pause/Resume/Seek/Stop via Media Session API. |
+| `PrivacyModeDisableRemoteScreenshots` | bool | `false` | Disallow remote screenshot capture via Media Session API. |
+| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable all scrobble/sync events to the Shoko server. |
+| `PrivacyModeForRestrictedContent` | bool | `false` | When true, restricted (adult) content automatically activates privacy mode using the configured sub-toggles. |
+| `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. Sent via JSON IPC; no Lua scripts needed. |
+| `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Controls subtitle visibility during screenshots: `Disabled` (subs always visible), `OnlyWhenPaused` (hide subs only when paused — avoids visual flicker), `Always` (hide subs on every capture). |
 | `AlwaysUseConfiguredRoutes` | bool | `false` | Skip direct URL reachability check; always use the connection's route table. |
 | `LogLevel` | string | `"Info"` | One of: `Trace`, `Debug`, `Info`, `Warn`, `Error`. |
 
