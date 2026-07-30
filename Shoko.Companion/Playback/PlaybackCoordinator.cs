@@ -570,23 +570,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             return null;
 
         var behavior = SettingsProvider.Instance.Settings.ScreenshotSubtitleBehavior;
-        var hideSubs = behavior switch
+        var subsFlag = behavior switch
         {
-            Configuration.ScreenshotSubtitleBehavior.Always => true,
-            Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused => _state == PlaybackState.Paused,
-            _ => false,
+            ScreenshotSubtitleBehavior.Disabled => "subtitles",
+            ScreenshotSubtitleBehavior.OnlyWhenPaused when _state == PlaybackState.Paused => "video",
+            ScreenshotSubtitleBehavior.Always => "video",
+            _ => "subtitles",
         };
-
-        if (hideSubs)
-        {
-            try { await _mpv.SetPropertyAsync("sub-visibility", false); }
-            catch (Exception ex) { Logger.Debug(ex, "Failed to hide subtitles before screenshot"); }
-        }
 
         var tempPath = Path.GetTempFileName() + ".png";
         try
         {
-            await _mpv.SendCommandAsync("screenshot-to-file", [tempPath]);
+            await _mpv.SendCommandAsync("screenshot-to-file", [tempPath, subsFlag]);
 
             if (!File.Exists(tempPath))
                 return null;
@@ -600,12 +595,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         }
         finally
         {
-            if (hideSubs)
-            {
-                try { await _mpv.SetPropertyAsync("sub-visibility", true); }
-                catch (Exception ex) { Logger.Debug(ex, "Failed to restore subtitle visibility after screenshot"); }
-            }
-
             try
             {
                 if (File.Exists(tempPath))
