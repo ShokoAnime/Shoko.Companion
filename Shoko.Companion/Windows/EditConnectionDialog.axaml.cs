@@ -109,9 +109,9 @@ public partial class EditConnectionDialog : Window
         var user = UsernameBox.Text?.Trim();
         var pass = PasswordBox.Text?.Trim();
 
-        if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(pass))
+        if (string.IsNullOrWhiteSpace(user))
         {
-            StatusText.Text = "Enter username and password first.";
+            StatusText.Text = "Enter a username first.";
             StatusText.Foreground = Avalonia.Media.Brushes.Red;
             return;
         }

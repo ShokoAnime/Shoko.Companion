@@ -96,9 +96,9 @@ public partial class AddConnectionDialog : Window
         var firstRoute = _routes.FirstOrDefault();
 
         var baseUrl = firstRoute?.FullUrl;
-        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(pass))
+        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(user))
         {
-            StatusText.Text = "Fill in connection name, username, and password first.";
+            StatusText.Text = "Fill in connection name and username first.";
             StatusText.Foreground = Avalonia.Media.Brushes.Red;
             return;
         }
