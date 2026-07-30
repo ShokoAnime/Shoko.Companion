@@ -120,9 +120,9 @@
                     <TextBlock Text="Subtitles on screenshot" VerticalAlignment="Center"/>
                     <ComboBox Name="ScreenshotSubtitleCombo" Width="160" HorizontalAlignment="Left"
                               SelectionChanged="OnAutoSaveSetting">
-                        <ComboBoxItem>Disabled</ComboBoxItem>
-                        <ComboBoxItem>Only when paused</ComboBoxItem>
                         <ComboBoxItem>Always</ComboBoxItem>
+                        <ComboBoxItem>Only during playback</ComboBoxItem>
+                        <ComboBoxItem>Never</ComboBoxItem>
                     </ComboBox>
                 </StackPanel>
 
