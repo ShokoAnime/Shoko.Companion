@@ -62,6 +62,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private bool _lastPrivacyMode;
     private bool _lastEffectivePrivacyMode;
 
+    // Thumbnail slave — persistent headless mpv for seek-to-position screenshots
+    private IMpvController? _thumbnailMpv;
+    private Timer? _thumbnailInactivityTimer;
+    private static readonly TimeSpan ThumbnailInactivityTimeout = TimeSpan.FromMinutes(5);
+    private string? _thumbnailStreamUrl;
+
     // Stream selection carryover (languages last deliberately chosen by the user)
     private string? _carryoverAudioLang;
     private string? _carryoverSubLang;
@@ -564,16 +570,59 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     }
 
     /// <inheritdoc/>
-    public async Task<byte[]?> CaptureScreenshotAsync()
+    public async Task<byte[]?> CaptureScreenshotAsync(TimeSpan? position = null)
     {
+        // Screenshot at a specific position in the slave mpv instance
+        if (position.HasValue)
+            return await CaptureScreenshotAtPositionAsync(position.Value);
+
+        // Current-frame screenshot from the main mpv instance
         if (_state is not (PlaybackState.Playing or PlaybackState.Paused))
             return null;
 
+        return await CaptureScreenshotToFileAsync(_mpv, _state);
+    }
+
+    /// <summary>
+    /// Capture a frame at a specific position using the headless thumbnail
+    /// mpv slave. The slave is lazily spawned and kept alive for
+    /// <see cref="ThumbnailInactivityTimeout"/>.
+    /// </summary>
+    private async Task<byte[]?> CaptureScreenshotAtPositionAsync(TimeSpan position)
+    {
+        var streamUrl = CurrentStreamUrl;
+        if (string.IsNullOrWhiteSpace(streamUrl))
+            return null;
+
+        try
+        {
+            await EnsureThumbnailMpvAsync(streamUrl);
+            if (_thumbnailMpv is null || !_thumbnailMpv.IsConnected)
+                return null;
+
+            await _thumbnailMpv.SetPropertyAsync("time-pos", position.TotalSeconds);
+
+            return await CaptureScreenshotToFileAsync(_thumbnailMpv, PlaybackState.Playing);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Thumbnail screenshot capture failed at position {Position}", position);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Take a screenshot-to-file on the given mpv instance and return the
+    /// PNG bytes. The <paramref name="effectiveState"/> is used only to
+    /// determine subtitle behavior (paused vs playing).
+    /// </summary>
+    private async Task<byte[]?> CaptureScreenshotToFileAsync(IMpvController mpv, PlaybackState effectiveState)
+    {
         var behavior = SettingsProvider.Instance.Settings.ScreenshotSubtitleBehavior;
         var subsFlag = behavior switch
         {
             ScreenshotSubtitleBehavior.Disabled => "subtitles",
-            ScreenshotSubtitleBehavior.OnlyWhenPaused when _state == PlaybackState.Paused => "video",
+            ScreenshotSubtitleBehavior.OnlyWhenPaused when effectiveState == PlaybackState.Paused => "video",
             ScreenshotSubtitleBehavior.Always => "video",
             _ => "subtitles",
         };
@@ -581,7 +630,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         var tempPath = Path.GetTempFileName() + ".png";
         try
         {
-            await _mpv.SendCommandAsync("screenshot-to-file", [tempPath, subsFlag]);
+            await mpv.SendCommandAsync("screenshot-to-file", [tempPath, subsFlag]);
 
             if (!File.Exists(tempPath))
                 return null;
@@ -604,6 +653,75 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             {
                 // Best-effort cleanup
             }
+        }
+    }
+
+    /// <summary>
+    /// Ensure the headless thumbnail mpv slave is running and loaded for
+    /// the given stream URL. Spawns a new one if needed.
+    /// </summary>
+    private async Task EnsureThumbnailMpvAsync(string streamUrl)
+    {
+        // If already running and on the same stream, just reset the inactivity timer
+        if (_thumbnailMpv?.IsConnected == true && _thumbnailStreamUrl == streamUrl)
+        {
+            ResetThumbnailInactivityTimer();
+            return;
+        }
+
+        // Tear down any existing slave
+        await DisposeThumbnailMpvAsync();
+
+        var mpvPath = SettingsProvider.Instance.Settings.MpvPath
+            ?? await MpvProcess.FindMpvAsync();
+        if (string.IsNullOrWhiteSpace(mpvPath))
+            return;
+
+        _thumbnailMpv = new MpvIpcClient();
+        var ipcPath = MpvProcess.GetDefaultIpcPath() + ".thumb";
+        var connected = await _thumbnailMpv.LaunchAndConnectAsync(mpvPath, ipcPath, new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+        if (!connected)
+        {
+            Logger.Warn("Failed to launch thumbnail mpv slave");
+            if (_thumbnailMpv is IAsyncDisposable ad)
+                await ad.DisposeAsync();
+            _thumbnailMpv = null;
+            return;
+        }
+
+        _thumbnailStreamUrl = streamUrl;
+
+        // Load the stream (paused, no audio, headless)
+        await _thumbnailMpv.SetPropertyAsync("vo", "null");
+        await _thumbnailMpv.SetPropertyAsync("audio", false);
+        await _thumbnailMpv.SetPropertyAsync("sub-visibility", true);
+        await _thumbnailMpv.LoadFileAsync(streamUrl);
+
+        ResetThumbnailInactivityTimer();
+        Logger.Info("Thumbnail mpv slave started for {StreamUrl}", streamUrl);
+    }
+
+    private void ResetThumbnailInactivityTimer()
+    {
+        _thumbnailInactivityTimer?.Dispose();
+        _thumbnailInactivityTimer = new Timer(_ => _ = DisposeThumbnailMpvAsync(),
+            null, ThumbnailInactivityTimeout, Timeout.InfiniteTimeSpan);
+    }
+
+    private async Task DisposeThumbnailMpvAsync()
+    {
+        _thumbnailInactivityTimer?.Dispose();
+        _thumbnailInactivityTimer = null;
+        _thumbnailStreamUrl = null;
+
+        if (_thumbnailMpv is not null)
+        {
+            try { await _thumbnailMpv.StopAsync(); }
+            catch { /* best-effort */ }
+            if (_thumbnailMpv is IAsyncDisposable ad)
+                await ad.DisposeAsync();
+            _thumbnailMpv = null;
+            Logger.Info("Thumbnail mpv slave disposed");
         }
     }
 

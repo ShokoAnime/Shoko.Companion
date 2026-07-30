@@ -88,11 +88,16 @@ public interface IPlaybackCoordinator
     Task SeekAsync(TimeSpan positionSeconds);
 
     /// <summary>
-    ///   Capture the current video frame via mpv's screenshot-to-file
-    ///   command. Returns the frame data as a PNG byte array, or null
-    ///   if capture fails or no video is loaded.
+    ///   Capture a video frame. When <paramref name="position"/> is null,
+    ///   captures the current frame from the active playback instance.
+    ///   When set, seeks to that position on a headless mpv slave and
+    ///   captures there.
     /// </summary>
-    Task<byte[]?> CaptureScreenshotAsync();
+    /// <param name="position">
+    ///   Optional seek position. Null for current frame, or a specific
+    ///   position within the currently playing file.
+    /// </param>
+    Task<byte[]?> CaptureScreenshotAsync(TimeSpan? position = null);
 
     /// <summary>
     ///   Show a text message on the mpv OSD, if mpv is connected.

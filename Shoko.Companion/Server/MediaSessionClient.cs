@@ -161,15 +161,15 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await _coordinator.StopAsync();
         });
 
-        _connection.On<Guid>("RequestScreenshot", async requestId =>
+        _connection.On<ScreenshotRequestDto>("RequestScreenshot", async request =>
         {
-            Logger.Info("MediaSession: Screenshot requested");
+            Logger.Info("MediaSession: Screenshot requested (position={Position})", request.Position);
             try
             {
-                var data = await _coordinator.CaptureScreenshotAsync();
+                var data = await _coordinator.CaptureScreenshotAsync(request.Position);
                 if (data is not null)
                 {
-                    await _connection.InvokeAsync("ReportScreenshot", requestId,
+                    await _connection.InvokeAsync("ReportScreenshot", request.RequestId,
                         new ScreenshotDataDto { Data = data });
                 }
             }
@@ -402,6 +402,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             CanStop = _hasActivePlayback && !privacyOverrideControl,
             CanReportState = _hasActivePlayback,
             CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
+            CanScreenshotAtPosition = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
         };
     }
 
@@ -506,6 +507,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanCaptureScreenshot")]
         public bool CanCaptureScreenshot { get; init; } = false;
+
+        [JsonProperty("CanScreenshotAtPosition")]
+        public bool CanScreenshotAtPosition { get; init; } = false;
     }
 
     private sealed class SessionInfoDto
@@ -661,6 +665,26 @@ public sealed class NextMediaItemInfoDto
     /// </summary>
     [JsonProperty("ThumbnailUrl")]
     public string? ThumbnailUrl { get; init; }
+}
+
+/// <summary>
+/// DTO for a screenshot request from the hub, mirroring the server's ScreenshotRequest.
+/// </summary>
+public sealed class ScreenshotRequestDto
+{
+    /// <summary>
+    /// Unique request identifier for correlating the response.
+    /// </summary>
+    [JsonProperty("RequestId")]
+    public Guid RequestId { get; init; }
+
+    /// <summary>
+    /// Optional seek position. When set, the companion seeks to this position
+    /// before capturing (via a headless mpv slave). When null, captures the
+    /// current frame from the active playback instance.
+    /// </summary>
+    [JsonProperty("Position")]
+    public TimeSpan? Position { get; init; }
 }
 
 /// <summary>
