@@ -99,6 +99,12 @@
                 <TextBlock Text="Remote playback control via the Media Session plugin."
                            FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
 
+                <CheckBox Name="MediaSessionEnabledCheck"
+                          Content="Enable Media Session API"
+                          IsCheckedChanged="OnMediaSessionEnabledToggled"/>
+
+                <StackPanel Name="MediaSessionSubPanel" Spacing="6"
+                            IsEnabled="{Binding IsChecked, ElementName=MediaSessionEnabledCheck}">
                 <CheckBox Name="AllowRemotePlayCheck" Content="Allow remote play"
                           IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
@@ -127,6 +133,7 @@
                             Click="OnConnectMediaSessionClick" MinWidth="80"/>
                     <Button Name="DisconnectMediaSessionButton" Content="Disconnect"
                             Click="OnDisconnectMediaSessionClick" MinWidth="80" IsEnabled="False"/>
+                </StackPanel>
                 </StackPanel>
 
                 <!-- === Discord Presence === -->

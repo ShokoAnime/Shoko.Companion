@@ -73,12 +73,14 @@ public partial class App : Application
         _coordinator.StateChanged += OnCoordinatorStateChanged;
         _coordinator.PositionTick += OnCoordinatorPositionTick;
 
-        // Auto-connect Media Session if configured
-        var autoConnectId = SettingsProvider.Instance.Settings.MediaSessionAutoConnectId;
-        if (autoConnectId.HasValue && autoConnectId.Value != Guid.Empty)
+        // Auto-connect Media Session if configured and enabled
+        var sessionSettings = SettingsProvider.Instance.Settings;
+        if (sessionSettings.MediaSessionEnabled
+            && sessionSettings.MediaSessionAutoConnectId is { } autoConnectId
+            && autoConnectId != Guid.Empty)
         {
             var autoConn = SettingsProvider.Instance.Settings.Connections
-                .FirstOrDefault(c => c.Id == autoConnectId.Value && c.ApiKey is { Length: > 0 });
+                .FirstOrDefault(c => c.Id == autoConnectId && c.ApiKey is { Length: > 0 });
             if (autoConn is not null)
             {
                 var reachableUrl = autoConn.ProbeReachableBaseUrl();

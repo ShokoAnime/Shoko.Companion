@@ -406,6 +406,8 @@ public partial class MainWindow : Window
         if (LogLevelCombo.SelectedItem is ComboBoxItem item && item.Content is string level)
             s.LogLevel = level;
 
+        s.MediaSessionEnabled = MediaSessionEnabledCheck.IsChecked == true;
+
         // Media Session auto-connect
         s.AllowRemotePlay = AllowRemotePlayCheck.IsChecked == true;
         s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
@@ -446,6 +448,8 @@ public partial class MainWindow : Window
     private void LoadMediaSessionSection()
     {
         var s = SettingsProvider.Instance.Settings;
+        MediaSessionEnabledCheck.IsChecked = s.MediaSessionEnabled;
+
         var items = new List<MediaSessionConnectionItem>
         {
             new() { Display = "(None)", Id = Guid.Empty }
@@ -554,6 +558,11 @@ public partial class MainWindow : Window
     private void OnRefreshMediaSessionClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         LoadMediaSessionSection();
+    }
+
+    private void OnMediaSessionEnabledToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        OnAutoSaveSetting(sender, e);
     }
 
     private void OnRegisterUrlSchemeClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

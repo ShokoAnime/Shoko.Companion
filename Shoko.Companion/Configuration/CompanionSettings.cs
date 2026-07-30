@@ -254,6 +254,13 @@ public class CompanionSettings
     public bool PrivacyModeForRestrictedContent { get; set; }
 
     /// <summary>
+    /// Global enabled switch for Media Session API integration.
+    /// When disabled, the companion won't auto-connect and the settings
+    /// section is hidden unless probing finds the plugin on a connection.
+    /// </summary>
+    public bool MediaSessionEnabled { get; set; }
+
+    /// <summary>
     /// NLog log level (Trace, Debug, Info, Warn, Error).
     /// </summary>
     public string LogLevel { get; set; } = "Info";
