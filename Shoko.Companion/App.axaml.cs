@@ -38,6 +38,11 @@ public partial class App : Application
     public MediaSessionClient? MediaSessionClient { get; private set; }
 
     /// <summary>
+    /// Gets the playback coordinator, or null if not yet initialized.
+    /// </summary>
+    public IPlaybackCoordinator? Coordinator => _coordinator;
+
+    /// <summary>
     /// Loads the Avalonia XAML for the application.
     /// </summary>
     public override void Initialize()

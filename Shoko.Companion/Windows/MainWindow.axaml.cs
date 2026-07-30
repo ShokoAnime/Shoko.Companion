@@ -58,6 +58,7 @@ public partial class MainWindow : Window
         AddDebugTestNotificationButton();
         AddDebugMpvTestButton();
         AddDebugDiscordTestButton();
+        AddDebugMpvOsdTestButton();
         AddDebugMpvNotFoundDialogButton();
 #endif
 
@@ -204,6 +205,26 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrWhiteSpace(dialog.MpvPath))
                 Logger.Info("mpv path set via debug dialog: {Path}", dialog.MpvPath);
+        };
+        FormPanel.Children.Add(button);
+    }
+    /// <summary>
+    /// DEBUG-only helper: adds a button that fires a test OSD message via the
+    /// playback coordinator's ShowOsdTextAsync.
+    /// Only shows if mpv is actually running.
+    /// </summary>
+    private void AddDebugMpvOsdTestButton()
+    {
+        var button = new Button
+        {
+            Content = "Test mpv OSD (DEBUG)",
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
+        };
+        button.Click += async (_, _) =>
+        {
+            var app = Avalonia.Application.Current as App;
+            if (app?.Coordinator is not null)
+                await app.Coordinator.ShowOsdTextAsync("DEBUG: OSD test message");
         };
         FormPanel.Children.Add(button);
     }
