@@ -87,7 +87,7 @@
                 <TextBlock Text="Control how playback progress is reported back to the Shoko server."
                            FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
 
-                <CheckBox Name="PlaybackSyncingCheck" Content="Playback syncing"
+                <CheckBox Name="PlaybackSyncingCheck" Content="Enable playback event syncing"
                           IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="LivePlaybackSyncingCheck" Content="Live playback syncing"
                           IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
