@@ -120,6 +120,7 @@ Global privacy mode with per-feature sub-toggles. Settings in `CompanionSettings
 - `PrivacyModeForRestrictedContent` — auto-activate privacy mode for restricted (adult) content
 - `PrivacyModeMpvKeybinding` — mpv key combo to toggle privacy during playback (default `Ctrl+p`, no Lua scripts needed)
 - `ScreenshotSubtitleBehavior` — subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` (default) / `Always`
+- `MediaSessionEnabled` — global enabled switch for Media Session API integration
 - `MediaSessionAutoConnectId` — Guid of the connection to auto-connect for Media Session API (null = none)
 - `LogLevel` — Trace/Debug/Info/Warn/Error
 - `UrlSchemeRegistrationAsked` — one-time prompt flag

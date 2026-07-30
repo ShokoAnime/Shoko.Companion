@@ -176,6 +176,7 @@ Logs are under `logs/` — handy when troubleshooting.
 | `OnNewUrlAction` | string | `"Append"` | `"Replace"` / `"Ignore"` / `"Append"` when a new URL arrives while playing. |
 | `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing. |
 | `LivePlaybackSyncingEnabled` | bool | `false` | Periodic position updates (requires `PlaybackSyncingEnabled`). |
+| `MediaSessionEnabled` | bool | `false` | Global enabled switch for Media Session API. |
 | `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` / `Always`. |
 | `PrivacyModeForRestrictedContent` | bool | `false` | Auto-activate privacy mode for restricted content. |
 | `ScrobbleIntervalMs` | int | `10000` | Progress update interval in ms (min 5000). |

@@ -120,6 +120,7 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable all scrobble/sync events to the Shoko server. |
 | `PrivacyModeForRestrictedContent` | bool | `false` | When true, restricted (adult) content automatically activates privacy mode using the configured sub-toggles. |
 | `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. Sent via JSON IPC; no Lua scripts needed. |
+| `MediaSessionEnabled` | bool | `false` | Global enabled switch for Media Session API integration. When disabled, auto-connect won't run and sub-controls are greyed out. |
 | `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Controls subtitle visibility during screenshots: `Disabled` (subs always visible), `OnlyWhenPaused` (hide subs only when paused — avoids visual flicker), `Always` (hide subs on every capture). |
 | `AlwaysUseConfiguredRoutes` | bool | `false` | Skip direct URL reachability check; always use the connection's route table. |
 | `LogLevel` | string | `"Info"` | One of: `Trace`, `Debug`, `Info`, `Warn`, `Error`. |
