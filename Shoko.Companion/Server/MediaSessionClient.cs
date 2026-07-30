@@ -170,7 +170,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 if (data is not null)
                 {
                     await _connection.InvokeAsync("ReportScreenshot", request.RequestId,
-                        new ScreenshotDataDto { Data = data });
+                        new CaptureResultDto { Data = data });
                 }
             }
             catch (Exception ex)
@@ -681,19 +681,20 @@ public sealed class ScreenshotRequestDto
 }
 
 /// <summary>
-/// DTO for screenshot data, mirroring the server's ScreenshotData.
+/// DTO for screenshot capture results, mirroring the server's CaptureResult.
 /// </summary>
-public sealed class ScreenshotDataDto
+public sealed class CaptureResultDto
 {
-    /// <summary>
-    /// MIME type of the image data (e.g. "image/png").
-    /// </summary>
-    [JsonProperty("MimeType")]
-    public string MimeType { get; init; } = "image/png";
-
     /// <summary>
     /// Raw image data bytes.
     /// </summary>
     [JsonProperty("Data")]
     public byte[] Data { get; init; } = [];
+
+    /// <summary>
+    /// Image format. One of "webp", "png", or "jpeg".
+    /// Defaults to "png" (mpv's screenshot output format).
+    /// </summary>
+    [JsonProperty("Format")]
+    public string Format { get; init; } = "png";
 }
