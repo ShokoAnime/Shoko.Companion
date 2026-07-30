@@ -393,6 +393,8 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
 
     private void ProcessIncomingMessage(string line)
     {
+        Logger.Trace("mpv << {Line}", line);
+
         try
         {
             var msg = JObject.Parse(line);
