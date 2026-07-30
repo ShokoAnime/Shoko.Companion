@@ -9,6 +9,8 @@
 
                 <!-- === Server Connections === -->
                 <TextBlock Text="Server Connections" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Add and manage your Shoko server connections."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
 
                 <ListBox Name="ConnectionListBox" Height="100">
                     <ListBox.ItemTemplate>
@@ -31,6 +33,16 @@
                           Content="Always use configured routes (bypass URL-provided address)"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 
+                <TextBlock Text="When a new URL arrives" Margin="0,8,0,0"/>
+                <ComboBox Name="OnNewUrlCombo"
+                          HorizontalAlignment="Stretch"
+                          SelectedIndex="2"
+                          SelectionChanged="OnAutoSaveSetting">
+                    <ComboBoxItem>Replace current playback</ComboBoxItem>
+                    <ComboBoxItem>Ignore</ComboBoxItem>
+                    <ComboBoxItem>Append to playlist</ComboBoxItem>
+                </ComboBox>
+
                 <!-- === Folder Mappings === -->
                 <Separator Margin="0,4"/>
                 <TextBlock Text="Folder Mappings" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
@@ -38,6 +50,108 @@
                            FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
                 <Button Name="ManageFoldersButton" Content="Manage Folders…"
                         Click="OnManageFoldersClick" HorizontalAlignment="Left" Margin="0,4,0,0"/>
+
+                <!-- === mpv Player === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="mpv Player" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Configure the mpv media player executable and playback behaviour."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <TextBlock Text="mpv executable path" Grid.Row="0" Grid.ColumnSpan="2"/>
+                    <TextBox Name="MpvPathBox" Watermark="Path to mpv (leave blank for auto-detect)" Grid.Row="1" Grid.Column="0"/>
+                    <Button Name="BrowseMpvButton" Content="Browse…" Click="OnBrowseMpvClick"
+                            Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>
+                </Grid>
+
+                <CheckBox Name="MpvFullScreenCheck" Content="Start in full screen"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="MpvStartPausedCheck" Content="Start playback paused"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <CheckBox Name="RestoreVolumeCheck" Content="Remember volume between sessions"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0"
+                            IsEnabled="{Binding IsChecked, ElementName=RestoreVolumeCheck}">
+                    <TextBlock Text="Volume:" VerticalAlignment="Center" MinWidth="50"/>
+                    <Slider Name="VolumeSlider" Minimum="0" Maximum="130" TickFrequency="10"
+                            TickPlacement="BottomRight" Width="200"
+                            ValueChanged="OnVolumeSliderChanged"/>
+                    <TextBlock Name="VolumeLabel" Text="100%" VerticalAlignment="Center" MinWidth="40"/>
+                </StackPanel>
+
+                <!-- === Playback Events === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Playback Events" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Control how playback progress is reported back to the Shoko server."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <CheckBox Name="PlaybackSyncingCheck" Content="Playback syncing"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="LivePlaybackSyncingCheck" Content="Live playback syncing"
+                          IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <!-- === Media Session API === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Media Session API" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Remote playback control via the Media Session plugin."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <CheckBox Name="AllowRemotePlayCheck" Content="Allow remote play"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Subtitles on screenshot" VerticalAlignment="Center"/>
+                    <ComboBox Name="ScreenshotSubtitleCombo" Width="160" HorizontalAlignment="Left"
+                              SelectionChanged="OnAutoSaveSetting">
+                        <ComboBoxItem>Disabled</ComboBoxItem>
+                        <ComboBoxItem>Only when paused</ComboBoxItem>
+                        <ComboBoxItem>Always</ComboBoxItem>
+                    </ComboBox>
+                </StackPanel>
+
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                    <TextBlock Text="Auto-connect connection" Grid.Row="0" Grid.ColumnSpan="2"/>
+                    <ComboBox Name="MediaSessionConnectionCombo" Grid.Row="1" Grid.Column="0"
+                              HorizontalAlignment="Stretch"
+                              SelectionChanged="OnAutoSaveSetting"/>
+                    <Button Name="RefreshMediaSessionButton" Content="↻" Grid.Row="1" Grid.Column="1"
+                            Width="32" Height="32" Margin="8,0,0,0" Click="OnRefreshMediaSessionClick"/>
+                </Grid>
+                <TextBlock Name="MediaSessionStatusText" Text="Not connected" FontSize="12" Foreground="Gray"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Name="ConnectMediaSessionButton" Content="Connect"
+                            Click="OnConnectMediaSessionClick" MinWidth="80"/>
+                    <Button Name="DisconnectMediaSessionButton" Content="Disconnect"
+                            Click="OnDisconnectMediaSessionClick" MinWidth="80" IsEnabled="False"/>
+                </StackPanel>
+
+                <!-- === Discord Presence === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Discord Presence" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Show what you are watching on your Discord profile."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <CheckBox Name="DiscordEnabledCheck" Content="Enable Discord Rich Presence"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <CheckBox Name="DiscordIdlePresenceCheck" Content="Show idle presence when not playing"
+                          IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <TextBlock Text="Discord client ID" Margin="0,0,0,4" Grid.ColumnSpan="2"/>
+                    <TextBox Name="DiscordClientIdBox" Watermark="Client ID (leave blank for default)"
+                             IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
+                             Grid.Row="1" Grid.Column="0"
+                             TextChanged="OnDiscordClientIdTextChanged"/>
+                    <Button Name="ResetDiscordClientIdButton" Content="🗑" Width="32" Height="32"
+                            Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"
+                            IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"/>
+                </Grid>
 
                 <!-- === Privacy Mode === -->
                 <Separator Margin="0,4"/>
@@ -66,134 +180,13 @@
                               IsCheckedChanged="OnAutoSaveSetting"/>
                 </StackPanel>
 
-                <Grid ColumnDefinitions="Auto,*" Margin="0,4,0,0">
-                    <TextBlock Text="mpv toggle key:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBox Name="PrivacyModeMpvKeybindingBox" Grid.Column="1"
-                             Watermark="Ctrl+p"
-                             TextChanged="OnAutoSaveSetting"/>
-                </Grid>
+                <TextBlock Text="mpv toggle key" Margin="0,4,0,0"/>
+                <TextBox Name="PrivacyModeMpvKeybindingBox"
+                         Watermark="Ctrl+p"
+                         TextChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="PrivacyModeForRestrictedCheck"
                           Content="Always use privacy mode for restricted content"
                           IsCheckedChanged="OnAutoSaveSetting"/>
-
-                <!-- === Playback Events === -->
-                <Separator Margin="0,4"/>
-                <TextBlock Text="Playback Events" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
-
-                <CheckBox Name="PlaybackSyncingCheck" Content="Playback syncing"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="LivePlaybackSyncingCheck" Content="Live playback syncing"
-                          IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <!-- === Media Session API === -->
-                <Separator Margin="0,4"/>
-                <TextBlock Text="Media Session API" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
-                <TextBlock Text="Remote playback control via the Media Session plugin."
-                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
-
-                <CheckBox Name="AllowRemotePlayCheck" Content="Allow remote play"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Subtitles on screenshot:" VerticalAlignment="Center"/>
-                    <ComboBox Name="ScreenshotSubtitleCombo" Width="160" HorizontalAlignment="Left"
-                              SelectionChanged="OnAutoSaveSetting">
-                        <ComboBoxItem>Disabled</ComboBoxItem>
-                        <ComboBoxItem>Only when paused</ComboBoxItem>
-                        <ComboBoxItem>Always</ComboBoxItem>
-                    </ComboBox>
-                </StackPanel>
-
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
-                    <TextBlock Text="Auto-connect connection:" Grid.Row="0" Grid.ColumnSpan="2"/>
-                    <ComboBox Name="MediaSessionConnectionCombo" Grid.Row="1" Grid.Column="0"
-                              HorizontalAlignment="Stretch"
-                              SelectionChanged="OnAutoSaveSetting"/>
-                    <Button Name="RefreshMediaSessionButton" Content="↻" Grid.Row="1" Grid.Column="1"
-                            Width="32" Height="32" Margin="8,0,0,0" Click="OnRefreshMediaSessionClick"/>
-                </Grid>
-                <TextBlock Name="MediaSessionStatusText" Text="Not connected" FontSize="12" Foreground="Gray"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Name="ConnectMediaSessionButton" Content="Connect"
-                            Click="OnConnectMediaSessionClick" MinWidth="80"/>
-                    <Button Name="DisconnectMediaSessionButton" Content="Disconnect"
-                            Click="OnDisconnectMediaSessionClick" MinWidth="80" IsEnabled="False"/>
-                </StackPanel>
-
-                <!-- === mpv === -->
-                <Separator Margin="0,4"/>
-                <TextBlock Text="mpv Player" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
-
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                    <TextBlock Text="mpv executable path" Grid.Row="0" Grid.ColumnSpan="2"/>
-                    <TextBox Name="MpvPathBox" Watermark="Path to mpv (leave blank for auto-detect)" Grid.Row="1" Grid.Column="0"/>
-                    <Button Name="BrowseMpvButton" Content="Browse…" Click="OnBrowseMpvClick"
-                            Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>
-                </Grid>
-
-                <CheckBox Name="MpvFullScreenCheck" Content="Start in full screen"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="MpvStartPausedCheck" Content="Start playback paused"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-
-                <CheckBox Name="RestoreVolumeCheck" Content="Remember volume between sessions"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0"
-                            IsEnabled="{Binding IsChecked, ElementName=RestoreVolumeCheck}">
-                    <TextBlock Text="Volume:" VerticalAlignment="Center" MinWidth="50"/>
-                    <Slider Name="VolumeSlider" Minimum="0" Maximum="130" TickFrequency="10"
-                            TickPlacement="BottomRight" Width="200"
-                            ValueChanged="OnVolumeSliderChanged"/>
-                    <TextBlock Name="VolumeLabel" Text="100%" VerticalAlignment="Center" MinWidth="40"/>
-                </StackPanel>
-
-                <TextBlock Text="When a new URL arrives:" FontWeight="SemiBold"/>
-                <ComboBox Name="OnNewUrlCombo"
-                          HorizontalAlignment="Stretch"
-                          SelectedIndex="2"
-                          SelectionChanged="OnAutoSaveSetting">
-                    <ComboBoxItem>Replace current playback</ComboBoxItem>
-                    <ComboBoxItem>Ignore</ComboBoxItem>
-                    <ComboBoxItem>Append to playlist</ComboBoxItem>
-                </ComboBox>
-
-                <!-- === Discord === -->
-                <Separator Margin="0,4"/>
-                <TextBlock Text="Discord Presence" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
-
-                <CheckBox Name="DiscordEnabledCheck" Content="Enable Discord Rich Presence"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                    <TextBlock Text="Discord Client ID" Margin="0,0,0,4" Grid.ColumnSpan="2"/>
-                    <TextBox Name="DiscordClientIdBox" Watermark="Client ID (leave blank for default)"
-                             IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
-                             Grid.Row="1" Grid.Column="0"
-                             TextChanged="OnDiscordClientIdTextChanged"/>
-                    <Button Name="ResetDiscordClientIdButton" Content="🗑" Width="32" Height="32"
-                            Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"
-                            IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"/>
-                </Grid>
-
-                <CheckBox Name="DiscordIdlePresenceCheck" Content="Show idle presence when not playing"
-                          IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-
-                <!-- === Logging === -->
-                <Separator Margin="0,4"/>
-                <TextBlock Text="Logging" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
-
-                <TextBlock Text="Log level" FontWeight="SemiBold"/>
-                <ComboBox Name="LogLevelCombo" Width="120"
-                          HorizontalAlignment="Left"
-                          SelectionChanged="OnAutoSaveSetting">
-                    <ComboBoxItem Content="Trace"/>
-                    <ComboBoxItem Content="Debug"/>
-                    <ComboBoxItem Content="Info"/>
-                    <ComboBoxItem Content="Warn"/>
-                    <ComboBoxItem Content="Error"/>
-                </ComboBox>
 
                 <!-- === URL Scheme === -->
                 <Separator Margin="0,4"/>
@@ -206,6 +199,27 @@
                     <Button Name="UnregisterUrlSchemeButton" Content="Unregister"
                             Click="OnUnregisterUrlSchemeClick" MinWidth="80"/>
                 </StackPanel>
+
+                <!-- === Logging === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Logging" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Configure verbosity of log output and troubleshooting."
+                           FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+                <TextBlock Text="Log level"/>
+                <ComboBox Name="LogLevelCombo" Width="120"
+                          HorizontalAlignment="Left"
+                          SelectionChanged="OnAutoSaveSetting">
+                    <ComboBoxItem Content="Trace"/>
+                    <ComboBoxItem Content="Debug"/>
+                    <ComboBoxItem Content="Info"/>
+                    <ComboBoxItem Content="Warn"/>
+                    <ComboBoxItem Content="Error"/>
+                </ComboBox>
+
+                <!-- === Debug === -->
+                <Separator Margin="0,4"/>
+                <TextBlock Text="Debug" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
 
             </StackPanel>
         </ScrollViewer>
