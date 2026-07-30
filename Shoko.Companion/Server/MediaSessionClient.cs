@@ -369,7 +369,6 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
                 State = "Idle",
-                FileId = null,
                 VideoId = null,
                 Title = null,
                 MediaType = null,
@@ -575,12 +574,6 @@ public sealed class PlaybackStateUpdateDto
     /// </summary>
     [JsonProperty("State")]
     public string State { get; init; } = "Idle";
-
-    /// <summary>
-    /// The file ID currently being played, if any.
-    /// </summary>
-    [JsonProperty("FileId")]
-    public int? FileId { get; init; }
 
     /// <summary>
     /// The Shoko video ID, if managed by Shoko.

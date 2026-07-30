@@ -488,7 +488,6 @@ public partial class App : Application
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            FileId = hideInfo ? null : _coordinator!.CurrentFileId,
             VideoId = hideInfo ? null : _coordinator!.CurrentFileId,
             Title = hideInfo ? null : _coordinator!.CurrentTitle,
             Position = TimeSpan.FromSeconds(_coordinator!.CurrentPositionSeconds),
@@ -502,10 +501,10 @@ public partial class App : Application
 
     private void OnCoordinatorPositionTick(object? sender, TimeSpan position)
     {
-        if (MediaSessionClient?.IsConnected != true)
+        if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
-        var state = _coordinator!.CurrentState switch
+        var state = _coordinator.CurrentState switch
         {
             PlaybackState.Playing => "Playing",
             PlaybackState.Paused => "Paused",
@@ -516,19 +515,18 @@ public partial class App : Application
             _ => "Idle",
         };
 
-        var sSettings2 = SettingsProvider.Instance.Settings;
-        var hideInfo2 = sSettings2.EffectivePrivacyMode && sSettings2.PrivacyModeHideMediaPlaybackInfo;
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            FileId = hideInfo2 ? null : _coordinator!.CurrentFileId,
-            VideoId = hideInfo2 ? null : _coordinator!.CurrentFileId,
-            Title = hideInfo2 ? null : _coordinator!.CurrentTitle,
+            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
+            Title = hideInfo ? null : _coordinator.CurrentTitle,
             Position = position,
-            Duration = _coordinator!.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value) : null,
-            StreamUrl = hideInfo2 ? null : _coordinator!.CurrentStreamUrl,
-            IsPaused = state == "Paused",
+            Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
+            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            IsPaused = state is "Paused",
         });
     }
 
@@ -541,7 +539,7 @@ public partial class App : Application
         if (_coordinator is null)
             return null;
 
-        var stateStr = _coordinator.CurrentState switch
+        var state = _coordinator.CurrentState switch
         {
             PlaybackState.Playing => "Playing",
             PlaybackState.Paused => "Paused",
@@ -551,19 +549,20 @@ public partial class App : Application
             PlaybackState.Error => "Error",
             _ => "Idle",
         };
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         return new PlaybackStateUpdateDto
         {
-            State = stateStr,
-            FileId = _coordinator.CurrentFileId,
-            VideoId = _coordinator.CurrentFileId,
-            Title = _coordinator.CurrentTitle,
+            State = state,
+            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
+            Title = hideInfo ? null : _coordinator.CurrentTitle,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            StreamUrl = _coordinator.CurrentStreamUrl,
-            IsPaused = _coordinator.CurrentState == PlaybackState.Paused,
+            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
         };
     }
 

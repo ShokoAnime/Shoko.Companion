@@ -162,6 +162,9 @@ public class PlaybackSessionManager
         _session.PositionMs = positionMs;
         if (!_session.IsPaused)
             _scrobbleTimer?.Change(ScrobbleIntervalMs, ScrobbleIntervalMs);
+
+        var pos = TimeSpan.FromMilliseconds(positionMs);
+        Task.Run(() => PositionTick?.Invoke(this, pos));
     }
 
     /// <summary>

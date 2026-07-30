@@ -80,6 +80,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     // with mpv's default value) from overwriting the persisted volume in settings.
     private bool _volumeRestored;
 
+    private bool _pendingSeek;
+
+    private bool _skipPositionEvents;
+
     /// <summary>
     /// Gets the current playback state.
     /// </summary>
@@ -565,7 +569,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             return;
 
         Logger.Info("Seeking to {Position}", position);
-        await _mpv.SetPropertyAsync("time-pos", position.TotalSeconds);
+        await _mpv.SendCommandAsync("seek", [position.TotalSeconds, "absolute+exact"]);
         _sessionManager.OnSeek(position.TotalMilliseconds);
     }
 
@@ -600,7 +604,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             if (_thumbnailMpv is null || !_thumbnailMpv.IsConnected)
                 return null;
 
-            await _thumbnailMpv.SetPropertyAsync("time-pos", position.TotalSeconds);
+            await _thumbnailMpv.SendCommandAsync("seek", [position.TotalSeconds, "absolute+exact"]);
 
             return await CaptureScreenshotToFileAsync(_thumbnailMpv, PlaybackState.Playing);
         }
@@ -730,10 +734,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         switch (args.Name)
         {
             case MpvPropTimePos:
-                if (args.Data is double pos)
-                    _sessionManager.OnPositionChanged(pos * 1000);
-                else if (args.Data is long lpos)
-                    _sessionManager.OnPositionChanged(lpos * 1000);
+                if (_skipPositionEvents)
+                    break;
+                var position = args.Data switch
+                {
+                    double d => d * 1000,
+                    long l => l * 1000,
+                    _ => 0,
+                };
+                if (_pendingSeek)
+                    _sessionManager.OnSeek(position);
+                else
+                    _sessionManager.OnPositionChanged(position);
                 break;
 
             case MpvPropPause:
@@ -1109,12 +1121,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 break;
 
             case "seek":
-                if (args.Data is Newtonsoft.Json.Linq.JObject seekData
-                    && seekData.TryGetValue("time", out var timeToken)
-                    && timeToken.Type == Newtonsoft.Json.Linq.JTokenType.Float)
-                {
-                    _sessionManager.OnSeek((double)timeToken * 1000);
-                }
+                _pendingSeek = true;
+                _skipPositionEvents = true;
+
+                break;
+
+            case "playback-restart":
+                _skipPositionEvents = false;
                 break;
 
             case "end-file":
