@@ -418,20 +418,21 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
             if (msg.TryGetValue("event", out var eventToken))
             {
                 var eventName = eventToken.Value<string>() ?? string.Empty;
-                var eventData = msg["data"];
+                // Some events (client-message) use "args" instead of "data"
+                var eventPayload = msg["data"] ?? msg["args"];
 
                 // Fire generic event
-                MpvEvent?.Invoke(this, new MpvEventArgs(eventName, eventData));
+                MpvEvent?.Invoke(this, new MpvEventArgs(eventName, eventPayload));
 
                 // Fire typed property change event
-                if (eventName == "property-change" && eventData is not null)
+                if (eventName == "property-change" && eventPayload is not null)
                 {
                     var propId = msg["id"]?.Value<int>();
                     var propName = msg["name"]?.Value<string>();
                     if (propName is not null)
                     {
                         PropertyChanged?.Invoke(this, new MpvPropertyChangeEventArgs(
-                            propId ?? 0, propName, eventData?.ToObject<object>()));
+                            propId ?? 0, propName, eventPayload.ToObject<object>()));
                     }
                 }
 
