@@ -272,7 +272,13 @@ public partial class MainWindow : Window
             _ => 2,
         };
         PlaybackSyncingCheck.IsChecked = s.PlaybackSyncingEnabled;
-        LivePlaybackSyncingCheck.IsChecked = s.LivePlaybackSyncingEnabled;
+        PlaybackSyncingBehaviorCombo.SelectedIndex = s.PlaybackSyncingBehavior switch
+        {
+            PlaybackSyncingBehavior.AfterPlayback => 0,
+            PlaybackSyncingBehavior.OnEveryEvent => 1,
+            PlaybackSyncingBehavior.LiveSync => 2,
+            _ => 0,
+        };
         PrivacyModeForRestrictedCheck.IsChecked = s.PrivacyModeForRestrictedContent;
         AlwaysUseRoutesCheck.IsChecked = s.AlwaysUseConfiguredRoutes;
 
@@ -396,7 +402,13 @@ public partial class MainWindow : Window
             _ => OnNewUrlBehavior.Append,
         };
         s.PlaybackSyncingEnabled = PlaybackSyncingCheck.IsChecked == true;
-        s.LivePlaybackSyncingEnabled = LivePlaybackSyncingCheck.IsChecked == true;
+        s.PlaybackSyncingBehavior = PlaybackSyncingBehaviorCombo.SelectedIndex switch
+        {
+            0 => PlaybackSyncingBehavior.AfterPlayback,
+            1 => PlaybackSyncingBehavior.OnEveryEvent,
+            2 => PlaybackSyncingBehavior.LiveSync,
+            _ => PlaybackSyncingBehavior.LiveSync,
+        };
         s.PrivacyModeForRestrictedContent = PrivacyModeForRestrictedCheck.IsChecked == true;
         s.AlwaysUseConfiguredRoutes = AlwaysUseRoutesCheck.IsChecked == true;
 
@@ -413,10 +425,10 @@ public partial class MainWindow : Window
         s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
         s.ScreenshotSubtitleBehavior = ScreenshotSubtitleCombo.SelectedIndex switch
         {
-            0 => Configuration.ScreenshotSubtitleBehavior.Disabled,
-            1 => Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused,
-            2 => Configuration.ScreenshotSubtitleBehavior.Always,
-            _ => Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused,
+            0 => ScreenshotSubtitleBehavior.Disabled,
+            1 => ScreenshotSubtitleBehavior.OnlyWhenPaused,
+            2 => ScreenshotSubtitleBehavior.Always,
+            _ => ScreenshotSubtitleBehavior.OnlyWhenPaused,
         };
         if (MediaSessionConnectionCombo.SelectedItem is MediaSessionConnectionItem msItem && msItem.Id != Guid.Empty)
             s.MediaSessionAutoConnectId = msItem.Id;
@@ -464,9 +476,9 @@ public partial class MainWindow : Window
         AllowRemoteScreenshotCheck.IsChecked = s.AllowRemoteScreenshot;
         ScreenshotSubtitleCombo.SelectedIndex = s.ScreenshotSubtitleBehavior switch
         {
-            Configuration.ScreenshotSubtitleBehavior.Disabled => 0,
-            Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused => 1,
-            Configuration.ScreenshotSubtitleBehavior.Always => 2,
+            ScreenshotSubtitleBehavior.Disabled => 0,
+            ScreenshotSubtitleBehavior.OnlyWhenPaused => 1,
+            ScreenshotSubtitleBehavior.Always => 2,
             _ => 1,
         };
 

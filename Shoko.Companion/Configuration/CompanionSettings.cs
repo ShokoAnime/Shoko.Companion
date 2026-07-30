@@ -156,7 +156,7 @@ public class CompanionSettings
     /// Controls whether mpv subtitles are hidden before capturing a screenshot.
     /// <c>OnlyWhenPaused</c> (default) avoids visual flicker during active playback.
     /// </summary>
-    public ScreenshotSubtitleBehavior ScreenshotSubtitleBehavior { get; set; } = Configuration.ScreenshotSubtitleBehavior.OnlyWhenPaused;
+    public ScreenshotSubtitleBehavior ScreenshotSubtitleBehavior { get; set; } = ScreenshotSubtitleBehavior.OnlyWhenPaused;
 
     // ── Media Session API ───────────────────────────────────────────────
 
@@ -186,10 +186,13 @@ public class CompanionSettings
     public bool PlaybackSyncingEnabled { get; set; } = true;
 
     /// <summary>
-    /// When true, sends periodic position updates during playback.
-    /// Requires <see cref="PlaybackSyncingEnabled"/> to be true to take effect.
+    /// How aggressively to sync playback events to the Shoko server.
+    /// <c>AfterPlayback</c>: stop event only.
+    /// <c>OnEveryEvent</c>: play/pause/resume/stop events.
+    /// <c>LiveSync</c> (default): play/pause/resume/stop + periodic live progress.
+    /// Only effective when <see cref="PlaybackSyncingEnabled"/> is true.
     /// </summary>
-    public bool LivePlaybackSyncingEnabled { get; set; }
+    public PlaybackSyncingBehavior PlaybackSyncingBehavior { get; set; } = PlaybackSyncingBehavior.AfterPlayback;
 
     /// <summary>
     /// When true, launches mpv in full screen mode.

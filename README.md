@@ -102,12 +102,12 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `MpvFullScreen` | bool | `true` | Launch mpv in full-screen mode. |
 | `OnNewUrlAction` | string | `"Append"` | When a new `shoko:` URL arrives while playing: `"Replace"` (stop + start new), `"Ignore"` (silently discard), or `"Append"` (add to mpv playlist). |
 | `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing (start/end/pause/resume). |
-| `LivePlaybackSyncingEnabled` | bool | `false` | Periodic position updates during playback (requires `PlaybackSyncingEnabled`). |
+| `PlaybackSyncingBehavior` | enum | `AfterPlayback` | How aggressively to sync playback events: `AfterPlayback` (stop only), `OnEveryEvent` (play/pause/resume/stop), `LiveSync` (everything + periodic progress). |
 | `MediaSessionAutoConnectId` | Guid | `null` | Server connection ID to auto-connect for the Media Session SignalR hub. Null disables auto-connect. |
 | `SyncUserDataInitialSkipEventCount` | int | `3` | Number of initial non-pause events to skip after starting, letting the player settle. |
 | `SyncUserDataLiveScrobbleTickThreshold` | int | `3` | Number of position events accumulated before sending a live progress update. |
 | `SyncUserDataLivePositionThresholdMs` | int | `5000` | Minimum position change (ms) required to trigger a live progress update. |
-| `SkipRestrictedContent` | bool | `true` | Skip playback event syncing for restricted/adult content. |
+| `PrivacyModeForRestrictedContent` | bool | `false` | Auto-activate privacy mode for restricted content. |
 | `ScrobbleIntervalMs` | int | `10000` | How often to send progress updates (min 5000). |
 | `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |

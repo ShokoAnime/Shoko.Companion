@@ -129,8 +129,7 @@ public class PlaybackSessionManager
             ImdbMovie = episodeIds?.ImdbMovie,
         };
 
-        if (settings.LivePlaybackSyncingEnabled && settings.PlaybackSyncingEnabled
-            && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
+        if (settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
         {
             _scrobbleTimer = new Timer(OnScrobbleTimer, null, ScrobbleIntervalMs, ScrobbleIntervalMs);
             Logger.Debug("Live scrobble timer started: interval={Interval}ms", ScrobbleIntervalMs);
@@ -262,8 +261,8 @@ public class PlaybackSessionManager
         SettingsProvider.Instance.Settings.RestrictedContentPlaying = false;
         _session = null;
 
-        var sStop = SettingsProvider.Instance.Settings;
-        if (shouldSendStop && sStop.PlaybackSyncingEnabled && !(sStop.EffectivePrivacyMode && sStop.PrivacyModeDisablePlaybackEvents))
+        var settings = SettingsProvider.Instance.Settings;
+        if (shouldSendStop && settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
         {
             Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
             {
@@ -273,7 +272,7 @@ public class PlaybackSessionManager
                 IsWatched = watched,
                 VideoStreamId = videoStreamId,
                 AudioStreamId = audioStreamId,
-                SubtitleStreamId = subtitleStreamId
+                SubtitleStreamId = subtitleStreamId,
             }));
         }
 
@@ -293,8 +292,8 @@ public class PlaybackSessionManager
         if (_session is null)
             return;
 
-        var sFinal = SettingsProvider.Instance.Settings;
-        if (!sFinal.PlaybackSyncingEnabled || (sFinal.EffectivePrivacyMode && sFinal.PrivacyModeDisablePlaybackEvents))
+        var settings = SettingsProvider.Instance.Settings;
+        if (!settings.PlaybackSyncingEnabled || (settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
             return;
 
         // Determine watched: either EOF was hit, or position >= 97.5% of duration
@@ -311,9 +310,17 @@ public class PlaybackSessionManager
 
         var fileId = _session.FileId;
         var position = _session.PositionMs;
+        var isRestricted = _session.IsRestricted;
+        var videoStreamId = _session.VideoStreamId;
+        var audioStreamId = _session.AudioStreamId;
+        var subtitleStreamId = _session.SubtitleStreamId;
+        var shouldSendStop = ShouldSendEvent(isPauseOrResume: true);
 
-        Logger.Info("Finalizing file {File}: pos={Pos:F0}ms, dur={Dur:F0}ms, eof={Eof}, watched={Watched}",
-            fileId, position, _session.DurationMs, _session.EofReached, watched);
+        Logger.Info("Finalizing file {File}: pos={Pos:F0}ms, dur={Dur:F0}ms, eof={Eof}, watched={Watched}, sendStop={SendStop}",
+            fileId, position, _session.DurationMs, _session.EofReached, watched, shouldSendStop);
+
+        if (!shouldSendStop)
+            return;
 
         Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
         {
@@ -321,9 +328,9 @@ public class PlaybackSessionManager
             EventType = ScrobbleEventType.PlaybackEnd,
             Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
             IsWatched = watched,
-            VideoStreamId = _session.VideoStreamId,
-            AudioStreamId = _session.AudioStreamId,
-            SubtitleStreamId = _session.SubtitleStreamId,
+            VideoStreamId = videoStreamId,
+            AudioStreamId = audioStreamId,
+            SubtitleStreamId = subtitleStreamId,
         }));
     }
 
@@ -398,10 +405,14 @@ public class PlaybackSessionManager
         if (!_session.SentStartEvent)
         {
             _session.SentStartEvent = true;
-            EmitPlaybackEvent(ScrobbleEventType.PlaybackStart, _session.InitialPositionMs, watched: null);
+            // Only send start event when behavior is LiveSync or OnEveryEvent
+            if (SettingsProvider.Instance.Settings.PlaybackSyncingBehavior is PlaybackSyncingBehavior.LiveSync or PlaybackSyncingBehavior.OnEveryEvent)
+                EmitPlaybackEvent(ScrobbleEventType.PlaybackStart, _session.InitialPositionMs, watched: null);
         }
 
-        EmitPlaybackEvent(ScrobbleEventType.PlaybackProgress, _session.PositionMs, watched: null);
+        // Only send live progress when behavior is LiveSync
+        if (SettingsProvider.Instance.Settings.PlaybackSyncingBehavior is PlaybackSyncingBehavior.LiveSync)
+            EmitPlaybackEvent(ScrobbleEventType.PlaybackProgress, _session.PositionMs, watched: null);
     }
 
     private bool ShouldSendEvent(bool isPauseOrResume = false)
@@ -422,11 +433,15 @@ public class PlaybackSessionManager
         if (_session is null)
             return;
 
-        var sEvt = SettingsProvider.Instance.Settings;
-        if (!sEvt.PlaybackSyncingEnabled)
+        var settings = SettingsProvider.Instance.Settings;
+        if (!settings.PlaybackSyncingEnabled)
             return;
 
-        if (sEvt.EffectivePrivacyMode && sEvt.PrivacyModeDisablePlaybackEvents)
+        if (settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents)
+            return;
+
+        // AfterPlayback only sends stop events (which bypass EmitPlaybackEvent)
+        if (settings.PlaybackSyncingBehavior is not (PlaybackSyncingBehavior.OnEveryEvent or PlaybackSyncingBehavior.LiveSync))
             return;
 
         Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs

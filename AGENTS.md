@@ -102,7 +102,7 @@ Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
 - `MpvFullScreen` — launch mpv in full screen (default `true`)
 - `OnNewUrlAction` — `Replace` / `Ignore` / `Append` (default `Append`)
 - `PlaybackSyncingEnabled` — master toggle for scrobbling (default `true`)
-- `LivePlaybackSyncingEnabled` — periodic position updates (default `false`)
+- `PlaybackSyncingBehavior` — `AfterPlayback` / `OnEveryEvent` / `LiveSync` (default `AfterPlayback`)
 - `SkipRestrictedContent` — skip scrobbling for adult content (default `true`)
 - `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`
 - `PrivacyModeHideDiscord` (replaces `DiscordPrivacyMode`)
