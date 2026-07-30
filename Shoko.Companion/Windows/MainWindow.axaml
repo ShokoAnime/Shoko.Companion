@@ -89,7 +89,7 @@
 
                 <CheckBox Name="PlaybackSyncingCheck" Content="Enable playback event syncing"
                           IsCheckedChanged="OnAutoSaveSetting"/>
-                <CheckBox Name="LivePlaybackSyncingCheck" Content="Live playback syncing"
+                <CheckBox Name="LivePlaybackSyncingCheck" Content="Send live progress updates"
                           IsEnabled="{Binding IsChecked, ElementName=PlaybackSyncingCheck}"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 
