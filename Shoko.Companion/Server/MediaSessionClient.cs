@@ -28,7 +28,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private Guid? _sessionId;
     private PlaybackStateUpdateDto? _lastState;
     private CancellationTokenSource? _stoppedTimerCts;
-    private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(10);
     private bool _hasActivePlayback;
 
     /// <summary>
