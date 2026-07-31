@@ -194,9 +194,13 @@
                               IsCheckedChanged="OnAutoSaveSetting"/>
                 </StackPanel>
 
-                <TextBlock Text="mpv toggle key" Margin="0,4,0,0"/>
+                <TextBlock Text="'Privacy Mode' keybinding" Margin="0,4,0,0"/>
                 <TextBox Name="PrivacyModeMpvKeybindingBox"
                          Watermark="Ctrl+p"
+                         TextChanged="OnAutoSaveSetting"/>
+                <TextBlock Text="'Open Companion Settings' keybinding" Margin="0,4,0,0"/>
+                <TextBox Name="SettingsMpvKeybindingBox"
+                         Watermark="Ctrl+Shift+o"
                          TextChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="PrivacyModeForRestrictedCheck"
                           Content="Always use privacy mode for restricted content"

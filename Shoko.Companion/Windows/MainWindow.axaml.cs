@@ -243,6 +243,7 @@ public partial class MainWindow : Window
         PrivacyModeDisableRemoteScreenshotsCheck.IsChecked = s.PrivacyModeDisableRemoteScreenshots;
         PrivacyModeDisablePlaybackEventsCheck.IsChecked = s.PrivacyModeDisablePlaybackEvents;
         PrivacyModeMpvKeybindingBox.Text = s.PrivacyModeMpvKeybinding ?? string.Empty;
+        SettingsMpvKeybindingBox.Text = s.SettingsMpvKeybinding ?? string.Empty;
 
         DiscordEnabledCheck.IsChecked = s.DiscordEnabled;
         DiscordClientIdBox.Text = s.DiscordClientIdOverride ?? string.Empty;
@@ -387,8 +388,11 @@ public partial class MainWindow : Window
         s.PrivacyModeDisableRemoteScreenshots = PrivacyModeDisableRemoteScreenshotsCheck.IsChecked == true;
         s.PrivacyModeDisablePlaybackEvents = PrivacyModeDisablePlaybackEventsCheck.IsChecked == true;
         s.PrivacyModeMpvKeybinding = string.IsNullOrWhiteSpace(PrivacyModeMpvKeybindingBox.Text)
-            ? "Ctrl+p"
+            ? string.Empty
             : PrivacyModeMpvKeybindingBox.Text.Trim();
+        s.SettingsMpvKeybinding = string.IsNullOrWhiteSpace(SettingsMpvKeybindingBox.Text)
+            ? string.Empty
+            : SettingsMpvKeybindingBox.Text.Trim();
 
         s.DiscordEnabled = DiscordEnabledCheck.IsChecked == true;
         s.DiscordClientIdOverride = string.IsNullOrWhiteSpace(DiscordClientIdBox.Text) ? null : DiscordClientIdBox.Text.Trim();

@@ -384,15 +384,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             await _mpv.ObservePropertyAsync(7, MpvPropSid);
             await _mpv.ObservePropertyAsync(8, MpvPropVolume);
 
-            // Load the m3u8 URL into mpv
-            await _mpv.LoadFileAsync(m3u8Url);
-
-            // Apply resume position once the file loads (handled in OnMpvEvent file-loaded)
-
-            // Discord presence will be set by the session manager on first event
-            EnsureDiscordInitialized();
-
-            // Set up mpv keybinding for privacy toggle
+            // Set up mpv keybindings
             var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
             if (!string.IsNullOrWhiteSpace(privacyKey))
             {
@@ -407,6 +399,29 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     Logger.Warn(ex, "Failed to register mpv keybinding for privacy toggle");
                 }
             }
+
+            var settingsKey = SettingsProvider.Instance.Settings.SettingsMpvKeybinding;
+            if (!string.IsNullOrWhiteSpace(settingsKey))
+            {
+                try
+                {
+                    await _mpv.SendCommandAsync("keybind",
+                        [settingsKey, "no-osd script-message shoko-companion-open-settings"]);
+                    Logger.Info("Registered mpv keybinding for settings: {Key}", settingsKey);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn(ex, "Failed to register mpv keybinding for settings");
+                }
+            }
+
+            // Load the m3u8 URL into mpv
+            await _mpv.LoadFileAsync(m3u8Url);
+
+            // Apply resume position once the file loads (handled in OnMpvEvent file-loaded)
+
+            // Discord presence will be set by the session manager on first event
+            EnsureDiscordInitialized();
 
             SetState(PlaybackState.Loading);
         }
@@ -1005,14 +1020,23 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         switch (args.Event)
         {
             case "client-message":
-                if (args.Data is Newtonsoft.Json.Linq.JArray msgArgs
-                    && msgArgs.Count > 0
-                    && msgArgs[0]?.ToString() == "shoko-companion-toggle-privacy")
+                if (args.Data is Newtonsoft.Json.Linq.JArray msgArgs && msgArgs.Count > 0)
                 {
-                    Logger.Info("mpv keybinding triggered — toggling privacy mode");
-                    var settings = SettingsProvider.Instance.Settings;
-                    settings.PrivacyMode = !settings.PrivacyMode;
-                    SettingsProvider.Instance.Save();
+                    var message = msgArgs[0]?.ToString();
+                    if (message == "shoko-companion-toggle-privacy")
+                    {
+                        Logger.Info("mpv keybinding triggered — toggling privacy mode");
+                        var settings = SettingsProvider.Instance.Settings;
+                        settings.PrivacyMode = !settings.PrivacyMode;
+                        SettingsProvider.Instance.Save();
+                    }
+                    else if (message == "shoko-companion-open-settings")
+                    {
+                        Logger.Info("mpv keybinding triggered — opening settings");
+                        _ = ShowOsdTextAsync("Opening settings…");
+                        if (Avalonia.Application.Current is App app)
+                            app.ShowSettingsWindow();
+                    }
                 }
                 break;
 

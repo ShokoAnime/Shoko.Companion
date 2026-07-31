@@ -153,6 +153,13 @@ public class CompanionSettings
     public string PrivacyModeMpvKeybinding { get; set; } = "Ctrl+p";
 
     /// <summary>
+    /// The mpv keybinding used to open the companion settings window
+    /// during playback. Sent as a <c>keybind</c> command over JSON IPC
+    /// when mpv connects.
+    /// </summary>
+    public string SettingsMpvKeybinding { get; set; } = "Ctrl+Shift+o";
+
+    /// <summary>
     /// Controls whether mpv subtitles are hidden before capturing a screenshot.
     /// <c>OnlyWhenPaused</c> (default) avoids visual flicker during active playback.
     /// </summary>

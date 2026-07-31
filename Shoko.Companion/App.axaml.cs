@@ -351,12 +351,25 @@ public partial class App : Application
         }
     }
 
-    private static void ShowSettingsWindow()
+    private MainWindow? _settingsWindow;
+
+    /// <summary>
+    /// Shows the settings window. Only one instance can be open at a time —
+    /// subsequent calls activate the existing window.
+    /// </summary>
+    public void ShowSettingsWindow()
     {
         Dispatcher.UIThread.Invoke(() =>
         {
-            var w = new MainWindow();
-            w.Show();
+            if (_settingsWindow is { IsVisible: true })
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
+            _settingsWindow = new MainWindow();
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow.Show();
         });
     }
 
