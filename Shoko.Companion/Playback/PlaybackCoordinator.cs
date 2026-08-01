@@ -66,7 +66,16 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private readonly Dictionary<int, MediaInfoDto> _mediaInfo = [];
     private Timer? _idleTimer;
     private DateTime? _idleStartTime;
-    private int _pendingPlaylistEntries;
+
+    /// <summary>
+    /// Number of playlist entries after the currently playing one, derived from
+    /// the observed mpv playlist cache (ground truth, including user navigation).
+    /// 0 when unknown, idle, or on the last entry.
+    /// </summary>
+    private int PendingPlaylistEntries => _mpvPlaylistEntries is { Count: > 0 } && _mpvCurrentPlaylistIndex >= 0
+        ? Math.Max(0, _mpvPlaylistEntries.Count - _mpvCurrentPlaylistIndex - 1)
+        : 0;
+
     private bool _lastPrivacyMode;
     private bool _lastEffectivePrivacyMode;
 
@@ -318,7 +327,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             }
 
             CacheMediaInfo(_playlistItems);
-            _pendingPlaylistEntries = _playlistItems.Count;
 
             // Read metadata from first item
             var firstItem = _playlistItems[0];
@@ -557,10 +565,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // previous/current/next queue cache); loadfile would lazily expand
             // it into internal entries only when played.
             await _mpv.AppendListAsync(m3u8Url);
-            _pendingPlaylistEntries++;
 
             Logger.Info("Appended to playlist: {Count} items (pending entries: {Pending})",
-                newItems.Count, _pendingPlaylistEntries);
+                newItems.Count, PendingPlaylistEntries);
 
             _notifications.Show("Shoko Companion", "Added to playlist", NotificationSeverity.Info);
             SetState(previousState);
@@ -591,7 +598,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         ResetDiscordPresence();
         _duration = 0;
-        _pendingPlaylistEntries = 0;
         _mediaInfo.Clear();
         _streamInitPhase = false;
         _mpvPlaylistEntries = null;
@@ -885,7 +891,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
             case MpvPropPause:
                 var isPaused = args.Data is true;
-                if (isPaused && _pendingPlaylistEntries == 1
+                if (isPaused && PendingPlaylistEntries is 0
                     && (_sessionManager.HasReachedEof
                         || (_duration > 0 && _sessionManager.CurrentPositionMs > 0
                             && (_duration - _sessionManager.CurrentPositionMs) < 300)))
@@ -1381,12 +1387,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     // multi-item playlist gets its PlaybackEnd event.
                     _sessionManager.FinalizeCurrentFile();
 
-                    if (_pendingPlaylistEntries > 0)
+                    if (PendingPlaylistEntries is > 0)
                     {
                         // Pause before the next file auto-loads so we can prep it
                         await _mpv.SetPropertyAsync(MpvPropPause, true);
-                        _pendingPlaylistEntries--;
-                        Logger.Debug("Playlist entry ended, {Pending} entries remaining", _pendingPlaylistEntries);
+                        Logger.Debug("Playlist entry ended, {Pending} entries remaining", PendingPlaylistEntries);
                     }
                     else
                     {
