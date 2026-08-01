@@ -72,6 +72,7 @@ public partial class App : Application
         _coordinator.StateChanged += OnPlaybackStateChanged;
         _coordinator.StateChanged += OnCoordinatorStateChanged;
         _coordinator.PositionTick += OnCoordinatorPositionTick;
+        _coordinator.VolumeStateChanged += OnCoordinatorVolumeStateChanged;
 
         // Auto-connect Media Session if configured and enabled
         var sessionSettings = SettingsProvider.Instance.Settings;
@@ -477,7 +478,7 @@ public partial class App : Application
 
     private void OnCoordinatorStateChanged(object? sender, PlaybackStateChangedEventArgs args)
     {
-        if (MediaSessionClient?.IsConnected != true)
+        if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
         // Update live capabilities based on playback state
@@ -501,14 +502,16 @@ public partial class App : Application
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            VideoId = hideInfo ? null : _coordinator!.CurrentFileId,
-            Title = hideInfo ? null : _coordinator!.CurrentTitle,
-            Position = TimeSpan.FromSeconds(_coordinator!.CurrentPositionSeconds),
-            Duration = _coordinator!.DurationSeconds.HasValue
-                ? TimeSpan.FromSeconds(_coordinator!.DurationSeconds.Value)
+            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
+            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
+            Duration = _coordinator.DurationSeconds.HasValue
+                ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            StreamUrl = hideInfo ? null : _coordinator!.CurrentStreamUrl,
+            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
             IsPaused = args.NewState == PlaybackState.Paused,
+            Volume = _coordinator.CurrentVolume,
+            IsMuted = _coordinator.CurrentMuted,
         });
     }
 
@@ -540,6 +543,41 @@ public partial class App : Application
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
             StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
             IsPaused = state is "Paused",
+            Volume = _coordinator.CurrentVolume,
+            IsMuted = _coordinator.CurrentMuted,
+        });
+    }
+
+    private void OnCoordinatorVolumeStateChanged(object? sender, EventArgs args)
+    {
+        if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
+            return;
+
+        var state = _coordinator.CurrentState switch
+        {
+            PlaybackState.Playing => "Playing",
+            PlaybackState.Paused => "Paused",
+            PlaybackState.Idle => "Idle",
+            PlaybackState.Stopped => "Stopped",
+            PlaybackState.Loading => "Loading",
+            PlaybackState.Error => "Error",
+            _ => "Idle",
+        };
+
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
+
+        _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
+        {
+            State = state,
+            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
+            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
+            Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
+            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            IsPaused = state is "Paused",
+            Volume = _coordinator.CurrentVolume,
+            IsMuted = _coordinator.CurrentMuted,
         });
     }
 
@@ -576,6 +614,8 @@ public partial class App : Application
                 : null,
             StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
             IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
+            Volume = _coordinator.CurrentVolume,
+            IsMuted = _coordinator.CurrentMuted,
         };
     }
 

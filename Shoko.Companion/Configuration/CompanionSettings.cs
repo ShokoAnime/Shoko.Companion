@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using Newtonsoft.Json;
+using Shoko.Companion.Playback;
 
 namespace Shoko.Companion.Configuration;
 
@@ -187,6 +188,12 @@ public class CompanionSettings
     public bool AllowRemoteScreenshot { get; set; } = true;
 
     /// <summary>
+    /// Allow remote clients to change volume and mute state on this device.
+    /// When false, <c>CanSetVolume</c> is reported as disabled.
+    /// </summary>
+    public bool AllowRemoteVolumeControl { get; set; } = true;
+
+    /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
     /// </summary>
@@ -213,18 +220,20 @@ public class CompanionSettings
     public bool MpvStartPaused { get; set; }
 
     /// <summary>
-    /// When true, the volume level is persisted between sessions and restored
-    /// on each playback start. When false, mpv's own volume configuration
-    /// (mpv.conf / per-user config) is left untouched.
+    /// The saved volume level (0–130), or null if never set. This is the
+    /// source of truth for volume: always restored when a file loads, and
+    /// always persisted when the volume changes (even while mpv is not
+    /// running, so the value applies on the next play).
     /// </summary>
-    public bool RestoreVolume { get; set; }
+    [Range(0, PlaybackCoordinator.MaxMpvVolume)]
+    public int Volume { get; set; } = 100;
 
     /// <summary>
-    /// The saved volume level (0–130), or null if never set. Only applied
-    /// when <see cref="RestoreVolume"/> is true and this has a value.
+    /// The saved mute state, or false if never set. This is the source of
+    /// truth for mute: always restored when a file loads, and always
+    /// persisted when the mute state changes.
     /// </summary>
-    [Range(0, 130)]
-    public int? Volume { get; set; }
+    public bool Muted { get; set; }
 
     /// <summary>
     /// Number of initial non-pause playback events to skip after starting,

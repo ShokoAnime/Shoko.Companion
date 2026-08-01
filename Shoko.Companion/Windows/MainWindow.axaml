@@ -69,16 +69,18 @@
                 <CheckBox Name="MpvStartPausedCheck" Content="Start playback paused"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 
-                <CheckBox Name="RestoreVolumeCheck" Content="Remember volume between sessions"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
-
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0"
-                            IsEnabled="{Binding IsChecked, ElementName=RestoreVolumeCheck}">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="24,0,0,0">
                     <TextBlock Text="Volume:" VerticalAlignment="Center" MinWidth="50"/>
+                    <!-- Maximum mirrors PlaybackCoordinator.MaxMpvVolume (130) —
+                         kept as a literal because x:Static of an int const does not
+                         convert to RangeBase.Maximum (double) in Avalonia XAML. -->
                     <Slider Name="VolumeSlider" Minimum="0" Maximum="130" TickFrequency="10"
                             TickPlacement="BottomRight" Width="200"
                             ValueChanged="OnVolumeSliderChanged"/>
                     <TextBlock Name="VolumeLabel" Text="100%" VerticalAlignment="Center" MinWidth="40"/>
+                    <Button Name="MuteToggleButton" Content="🔊" Width="32" Height="32"
+                            VerticalAlignment="Center" ToolTip.Tip="Mute"
+                            Click="OnMuteToggleClick"/>
                 </StackPanel>
 
                 <!-- === Playback Events === -->
@@ -113,6 +115,8 @@
                 <StackPanel Name="MediaSessionSubPanel" Spacing="6"
                             IsEnabled="{Binding IsChecked, ElementName=MediaSessionEnabledCheck}">
                 <CheckBox Name="AllowRemotePlayCheck" Content="Allow remote play"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="AllowRemoteVolumeControlCheck" Content="Allow remote volume control"
                           IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
                           IsCheckedChanged="OnAutoSaveSetting"/>

@@ -161,6 +161,20 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await _coordinator.StopAsync();
         });
 
+        _connection.On<int?, bool?>("SetVolume", async (volume, muted) =>
+        {
+            Logger.Info("MediaSession: SetVolume command received (volume={Volume}, muted={Muted})",
+                volume, muted);
+            try
+            {
+                await _coordinator.SetVolumeAsync(volume, muted);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle SetVolume command");
+            }
+        });
+
         _connection.On<ScreenshotRequestDto>("RequestScreenshot", async request =>
         {
             Logger.Info("MediaSession: Screenshot requested (position={Position})", request.Position);
@@ -402,6 +416,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
             CanReportState = _hasActivePlayback,
             CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
             CanScreenshotAtPosition = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
+            MaxVolume = PlaybackCoordinator.MaxMpvVolume,
+            CanSetVolume = s.AllowRemoteVolumeControl && !privacyOverrideControl,
         };
     }
 
@@ -509,6 +525,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanScreenshotAtPosition")]
         public bool CanScreenshotAtPosition { get; init; } = false;
+
+        [JsonProperty("MaxVolume")]
+        public int? MaxVolume { get; init; }
+
+        [JsonProperty("CanSetVolume")]
+        public bool CanSetVolume { get; init; } = false;
     }
 
     private sealed class SessionInfoDto
@@ -622,6 +644,18 @@ public sealed class PlaybackStateUpdateDto
     /// </summary>
     [JsonProperty("IsPaused")]
     public bool IsPaused { get; init; }
+
+    /// <summary>
+    /// The current volume (percent, 0–130), or null if unknown.
+    /// </summary>
+    [JsonProperty("Volume")]
+    public int? Volume { get; init; }
+
+    /// <summary>
+    /// Whether audio is muted, or null if unknown.
+    /// </summary>
+    [JsonProperty("IsMuted")]
+    public bool? IsMuted { get; init; }
 
     /// <summary>
     /// Stream URL the player is using, if known.

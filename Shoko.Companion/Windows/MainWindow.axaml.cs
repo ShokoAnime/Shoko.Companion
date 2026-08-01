@@ -11,6 +11,7 @@ using Shoko.Companion.Configuration;
 using Shoko.Companion.Launch;
 using Shoko.Companion.Mpv;
 using Shoko.Companion.Notifications;
+using Shoko.Companion.Playback;
 using Shoko.Companion.Server;
 #if DEBUG
 using Shoko.Companion.Discord;
@@ -37,6 +38,28 @@ public partial class MainWindow : Window
     // Track media session connection state
     private bool _mediaSessionConnected;
 
+    // Debounce timer for the volume slider — writes to mpv 150ms after the
+    // user stops dragging (mirrors the Discord Client ID debounce pattern).
+    private Timer? _volumeDebounceTimer;
+
+    // True while the user is dragging the volume slider thumb; suppresses
+    // live-state readback so the thumb doesn't jump under the cursor.
+    private bool _volumeSliderDragging;
+
+    // True while VolumeSlider.Value is being set programmatically from live
+    // mpv state; suppresses the ValueChanged write-back loop.
+    private bool _syncingVolumeFromLive;
+
+    // Guards against subscribing to VolumeStateChanged more than once, in
+    // case the coordinator becomes available after the window is created.
+    private bool _volumeStateSubscribed;
+
+    /// <summary>
+    /// Gets the playback coordinator, or null if the app hasn't initialized
+    /// it yet (e.g. the window was opened before playback started).
+    /// </summary>
+    private IPlaybackCoordinator? Coordinator => (Avalonia.Application.Current as App)?.Coordinator;
+
     /// <summary>
     /// Creates the window, loads current settings, and (in DEBUG builds) adds
     /// test buttons for notifications, mpv, and Discord.
@@ -54,6 +77,10 @@ public partial class MainWindow : Window
             RemoveConnectionButton.IsEnabled = hasSel;
         };
         LoadSettings();
+        VolumeSlider.PointerPressed += (_, _) => _volumeSliderDragging = true;
+        VolumeSlider.PointerReleased += (_, _) => _volumeSliderDragging = false;
+        EnsureVolumeStateSubscription();
+        Closed += OnClosed;
 #if DEBUG
         AddDebugTestNotificationButton();
         AddDebugMpvTestButton();
@@ -75,6 +102,18 @@ public partial class MainWindow : Window
                 OnAddConnectionClick(null, null!);
             });
         }
+    }
+
+    /// <summary>
+    /// When the window opens, ensure we're subscribed to the coordinator's
+    /// volume state (it may have been created after this window) and sync the
+    /// mute button from live state.
+    /// </summary>
+    protected override void OnOpened(EventArgs e)
+    {
+        base.OnOpened(e);
+        EnsureVolumeStateSubscription();
+        UpdateMuteButton(Coordinator?.CurrentMuted ?? false);
     }
 
 #if DEBUG
@@ -253,17 +292,9 @@ public partial class MainWindow : Window
         MpvFullScreenCheck.IsChecked = s.MpvFullScreen;
         MpvStartPausedCheck.IsChecked = s.MpvStartPaused;
 
-        RestoreVolumeCheck.IsChecked = s.RestoreVolume;
-        if (s.Volume.HasValue)
-        {
-            VolumeSlider.Value = s.Volume.Value;
-            VolumeLabel.Text = $"{s.Volume.Value}%";
-        }
-        else
-        {
-            VolumeSlider.Value = 100;
-            VolumeLabel.Text = "100%";
-        }
+        VolumeSlider.Value = Coordinator?.CurrentVolume ?? s.Volume;
+        VolumeLabel.Text = $"{Coordinator?.CurrentVolume ?? s.Volume}%";
+        UpdateMuteButton(Coordinator?.CurrentMuted ?? false);
 
         OnNewUrlCombo.SelectedIndex = s.OnNewUrlAction switch
         {
@@ -416,7 +447,6 @@ public partial class MainWindow : Window
         s.PrivacyModeForRestrictedContent = PrivacyModeForRestrictedCheck.IsChecked == true;
         s.AlwaysUseConfiguredRoutes = AlwaysUseRoutesCheck.IsChecked == true;
 
-        s.RestoreVolume = RestoreVolumeCheck.IsChecked == true;
         s.Volume = (int)VolumeSlider.Value;
 
         if (LogLevelCombo.SelectedItem is ComboBoxItem item && item.Content is string level)
@@ -426,6 +456,7 @@ public partial class MainWindow : Window
 
         // Media Session auto-connect
         s.AllowRemotePlay = AllowRemotePlayCheck.IsChecked == true;
+        s.AllowRemoteVolumeControl = AllowRemoteVolumeControlCheck.IsChecked == true;
         s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
         s.ScreenshotSubtitleBehavior = ScreenshotSubtitleCombo.SelectedIndex switch
         {
@@ -453,6 +484,126 @@ public partial class MainWindow : Window
         var val = (int)e.NewValue;
         VolumeLabel.Text = $"{val}%";
         OnAutoSaveSetting(sender, null!);
+
+        if (_loadingSettings || _syncingVolumeFromLive)
+            return;
+
+        // Debounce: reset the timer on each change, write to mpv 150ms after
+        // the user stops dragging. Mirrors the Discord Client ID pattern.
+        _volumeDebounceTimer?.Dispose();
+        _volumeDebounceTimer = new Timer(_ =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+            {
+                try
+                {
+                    var coordinator = Coordinator;
+                    if (coordinator is not null)
+                        await coordinator.SetVolumeAsync((int)VolumeSlider.Value, null);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex, "Failed to set mpv volume");
+                }
+            });
+        }, null, 150, Timeout.Infinite);
+    }
+
+    /// <summary>
+    /// Toggles mute. The coordinator handles both cases: when mpv is connected
+    /// it writes to mpv's mute property (persistence flows through the
+    /// coordinator's PersistMute path); when mpv is not connected it persists
+    /// to settings for the next play. Either way it raises VolumeStateChanged,
+    /// which refreshes this button.
+    /// </summary>
+    private async void OnMuteToggleClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var coordinator = Coordinator;
+        if (coordinator is null) return;
+
+        try
+        {
+            await coordinator.SetVolumeAsync(null, !coordinator.CurrentMuted);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to toggle mute");
+        }
+    }
+
+    /// <summary>
+    /// Subscribes the window to the coordinator's volume state changes exactly
+    /// once. The coordinator may be created after the window, so this is also
+    /// re-checked when the window opens.
+    /// </summary>
+    private void EnsureVolumeStateSubscription()
+    {
+        if (_volumeStateSubscribed)
+            return;
+
+        var coordinator = Coordinator;
+        if (coordinator is null)
+            return;
+
+        _volumeStateSubscribed = true;
+        coordinator.VolumeStateChanged += OnCoordinatorVolumeStateChanged;
+    }
+
+    /// <summary>
+    /// Handles live volume/mute changes from the coordinator (mpv). Fires on
+    /// every mpv property-change, including ones this window caused, so the
+    /// slider, label, and mute button always reflect mpv's actual state.
+    /// mpv IPC events can arrive on a background thread — marshal to the UI
+    /// thread.
+    /// </summary>
+    private void OnCoordinatorVolumeStateChanged(object? sender, EventArgs e)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            var coordinator = Coordinator;
+            if (coordinator is null)
+                return;
+
+            UpdateMuteButton(coordinator.CurrentMuted);
+
+            VolumeLabel.Text = $"{coordinator.CurrentVolume}%";
+
+            // Read the live volume back into the slider, unless the user is
+            // mid-drag (don't yank the thumb) or the value is already in sync.
+            if (!_volumeSliderDragging && (int)VolumeSlider.Value != coordinator.CurrentVolume)
+            {
+                _syncingVolumeFromLive = true;
+                VolumeSlider.Value = coordinator.CurrentVolume;
+                _syncingVolumeFromLive = false;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Updates the mute toggle button's icon and tooltip to match the
+    /// effective mute state (live from the coordinator when known, otherwise
+    /// the saved setting). The button is never disabled here.
+    /// </summary>
+    private void UpdateMuteButton(bool muted)
+    {
+        MuteToggleButton.Content = muted ? "🔇" : "🔊";
+        ToolTip.SetTip(MuteToggleButton, muted ? "Unmute" : "Mute");
+    }
+
+    /// <summary>
+    /// Cleans up when the settings window closes: unsubscribes from the
+    /// coordinator and disposes the volume debounce timer.
+    /// </summary>
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _volumeDebounceTimer?.Dispose();
+        _volumeDebounceTimer = null;
+
+        if (_volumeStateSubscribed && Coordinator is { } coordinator)
+        {
+            coordinator.VolumeStateChanged -= OnCoordinatorVolumeStateChanged;
+            _volumeStateSubscribed = false;
+        }
     }
 
     private void OnManageFoldersClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -477,6 +628,7 @@ public partial class MainWindow : Window
         }));
 
         AllowRemotePlayCheck.IsChecked = s.AllowRemotePlay;
+        AllowRemoteVolumeControlCheck.IsChecked = s.AllowRemoteVolumeControl;
         AllowRemoteScreenshotCheck.IsChecked = s.AllowRemoteScreenshot;
         ScreenshotSubtitleCombo.SelectedIndex = s.ScreenshotSubtitleBehavior switch
         {

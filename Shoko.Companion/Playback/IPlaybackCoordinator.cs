@@ -40,6 +40,20 @@ public interface IPlaybackCoordinator
     string? CurrentStreamUrl { get; }
 
     /// <summary>
+    /// Gets the effective volume level (0–<see cref="PlaybackCoordinator.MaxMpvVolume"/>).
+    /// When mpv is connected this is the live mpv value; otherwise it falls
+    /// back to the saved settings value, which defaults to 100 (matching
+    /// mpv's own default).
+    /// </summary>
+    int CurrentVolume { get; }
+
+    /// <summary>
+    /// Gets the effective mute state. When mpv is connected this is the live
+    /// mpv value; otherwise it falls back to the saved settings value.
+    /// </summary>
+    bool CurrentMuted { get; }
+
+    /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
     event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
@@ -49,6 +63,11 @@ public interface IPlaybackCoordinator
     ///   current position so the media session hub stays in sync.
     /// </summary>
     event EventHandler<TimeSpan>? PositionTick;
+
+    /// <summary>
+    ///   Raised when the current volume or mute state changes.
+    /// </summary>
+    event EventHandler? VolumeStateChanged;
 
     /// <summary>
     /// Play a shoko: URL (handles m3u8 ↔ JSON resolution, mpv launch, scrobble, etc).
@@ -86,6 +105,19 @@ public interface IPlaybackCoordinator
     /// Seek to the specified position in seconds.
     /// </summary>
     Task SeekAsync(TimeSpan positionSeconds);
+
+    /// <summary>
+    /// Set the mpv volume and/or mute state. At least one of
+    /// <paramref name="volume"/> or <paramref name="muted"/> must be non-null.
+    /// </summary>
+    /// <param name="volume">
+    ///   Optional. Target volume (percent). Clamped to
+    ///   0..<see cref="PlaybackCoordinator.MaxMpvVolume"/>.
+    /// </param>
+    /// <param name="muted">
+    ///   Optional. Whether audio should be muted.
+    /// </param>
+    Task SetVolumeAsync(int? volume, bool? muted);
 
     /// <summary>
     ///   Capture a video frame. When <paramref name="position"/> is null,

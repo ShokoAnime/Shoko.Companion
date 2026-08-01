@@ -38,6 +38,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private const string MpvPropAid = "aid";
     private const string MpvPropSid = "sid";
     private const string MpvPropVolume = "volume";
+    private const string MpvPropMute = "mute";
+
+    // ── Max volume ──────────────────────────────────────────────────────
+    /// <summary>
+    ///   The maximum supported volume level (percent). Referenced by the
+    ///   settings validation, the volume slider XAML, and the hub
+    ///   capability DTO.
+    /// </summary>
+    public const int MaxMpvVolume = 130;
 
     // ── Thresholds ──────────────────────────────────────────────────────
     private const double MinResumeSeconds = 5;
@@ -79,6 +88,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     // Prevents the initial mpv property-change for volume (which fires at startup
     // with mpv's default value) from overwriting the persisted volume in settings.
     private bool _volumeRestored;
+
+    // False until the saved mute state has been restored on the first file of a
+    // session. Prevents the initial mpv property-change for mute (which fires at
+    // startup with mpv's default value) from overwriting the persisted mute in
+    // settings.
+    private bool _muteRestored;
+
+    // Live mpv volume/mute values, when known. Null once mpv is not connected
+    // so CurrentVolume/CurrentMuted fall back to the saved settings (which are
+    // the source of truth when mpv is not running).
+    private int? _currentVolume;
+    private bool? _currentMuted;
 
     private bool _pendingSeek;
 
@@ -124,6 +145,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         }
     }
 
+    /// <inheritdoc/>
+    public int CurrentVolume => _currentVolume ?? SettingsProvider.Instance.Settings.Volume;
+
+    /// <inheritdoc/>
+    public bool CurrentMuted => _currentMuted ?? SettingsProvider.Instance.Settings.Muted;
+
     /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
@@ -134,6 +161,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     ///   current position so the media session hub stays in sync.
     /// </summary>
     public event EventHandler<TimeSpan>? PositionTick;
+
+    /// <summary>
+    ///   Raised when the current volume or mute state changes, so
+    ///   listeners can re-report state to the media session hub.
+    /// </summary>
+    public event EventHandler? VolumeStateChanged;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
@@ -318,6 +351,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // Reset volume-restored guard so the initial mpv volume property-change
             // doesn't overwrite the persisted value before we restore it.
             _volumeRestored = false;
+            _muteRestored = false;
 
             // Pre-fetch first file's user data for resume
             var userData = await _apiClient.FetchFileUserDataAsync(firstFile.ID);
@@ -373,6 +407,15 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 return;
             }
 
+            // Apply the saved volume/mute now that mpv is connected (these are
+            // global properties valid while idle), BEFORE registering the
+            // observations, so the immediate observe events report the restored
+            // values — no pre-restore default can reach the hub.
+            await _mpv.SetPropertyAsync(MpvPropVolume, SettingsProvider.Instance.Settings.Volume);
+            await _mpv.SetPropertyAsync(MpvPropMute, SettingsProvider.Instance.Settings.Muted);
+            _volumeRestored = true;
+            _muteRestored = true;
+
             // Register property observers BEFORE loading the file
             // so we don't miss the initial "path" change event
             await _mpv.ObservePropertyAsync(1, MpvPropTimePos);
@@ -383,6 +426,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             await _mpv.ObservePropertyAsync(6, MpvPropAid);
             await _mpv.ObservePropertyAsync(7, MpvPropSid);
             await _mpv.ObservePropertyAsync(8, MpvPropVolume);
+            await _mpv.ObservePropertyAsync(9, MpvPropMute);
 
             // Set up mpv keybindings
             var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
@@ -586,6 +630,41 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         Logger.Info("Seeking to {Position}", position);
         await _mpv.SendCommandAsync("seek", [position.TotalSeconds, "absolute+exact"]);
         _sessionManager.OnSeek(position.TotalMilliseconds);
+    }
+
+    /// <inheritdoc/>
+    public async Task SetVolumeAsync(int? volume, bool? muted)
+    {
+        if (!_mpv.IsConnected)
+        {
+            // mpv not running — settings are the source of truth; persist for
+            // the next play instead of throwing "Not connected to mpv".
+            var settings = SettingsProvider.Instance.Settings;
+            if (volume.HasValue) settings.Volume = Math.Clamp(volume.Value, 0, MaxMpvVolume);
+            if (muted.HasValue) settings.Muted = muted.Value;
+            SettingsProvider.Instance.Save();
+            VolumeStateChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        var osdMessages = new List<string>();
+        if (volume.HasValue)
+        {
+            var clamped = Math.Clamp(volume.Value, 0, MaxMpvVolume);
+            await _mpv.SetPropertyAsync(MpvPropVolume, clamped);
+            var isMutedAfter = muted ?? CurrentMuted;
+            osdMessages.Add(isMutedAfter
+                ? $"Volume: {clamped}% (Muted)"
+                : $"Volume: {clamped}%");
+        }
+        if (muted.HasValue)
+            await _mpv.SetPropertyAsync(MpvPropMute, muted.Value);
+
+        if (muted.HasValue && !volume.HasValue)
+            osdMessages.Add($"Mute: {(muted.Value ? "yes" : "no")}");
+
+        if (osdMessages.Count > 0)
+            await ShowOsdTextAsync(string.Join("\n", osdMessages));
     }
 
     /// <inheritdoc/>
@@ -809,15 +888,58 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 break;
 
             case MpvPropVolume:
+                // Ignore property-changes that fire during mpv startup before
+                // the saved volume has been restored. mpv reports its current
+                // value (default 100) as soon as the property is observed,
+                // which would make the hub flash the un-restored value.
+                if (!_volumeRestored)
+                {
+                    Logger.Trace("Volume property-change ignored — volume not yet restored");
+                    break;
+                }
                 if (args.Data is long vl)
+                {
+                    _currentVolume = (int)vl;
                     PersistVolume((int)vl);
+                }
                 else if (args.Data is int vi)
+                {
+                    _currentVolume = vi;
                     PersistVolume(vi);
+                }
                 else if (args.Data is double vd)
+                {
+                    _currentVolume = (int)vd;
                     PersistVolume((int)vd);
+                }
                 else
+                {
                     Logger.Debug("Volume property-change with unexpected type: {Type} value={Value}",
                         args.Data?.GetType().Name, args.Data);
+                    break;
+                }
+                VolumeStateChanged?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case MpvPropMute:
+                // Same guard as volume: ignore the initial mute property-change
+                // that fires at startup before the saved mute is restored.
+                if (!_muteRestored)
+                {
+                    Logger.Trace("Mute property-change ignored — mute not yet restored");
+                    break;
+                }
+                if (args.Data is bool muted)
+                {
+                    _currentMuted = muted;
+                    VolumeStateChanged?.Invoke(this, EventArgs.Empty);
+                    PersistMute(muted);
+                }
+                else
+                {
+                    Logger.Debug("Mute property-change with unexpected type: {Type} value={Value}",
+                        args.Data?.GetType().Name, args.Data);
+                }
                 break;
         }
     }
@@ -1136,10 +1258,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     await _mpv.SetPropertyAsync("force-media-title", winTitle);
                 }
 
-                var savedVolume = SettingsProvider.Instance.Settings.Volume;
-                if (SettingsProvider.Instance.Settings.RestoreVolume && savedVolume.HasValue)
-                    await _mpv.SetPropertyAsync(MpvPropVolume, savedVolume.Value);
-                _volumeRestored = true;
                 if (!SettingsProvider.Instance.Settings.MpvStartPaused)
                     await _mpv.SetPropertyAsync(MpvPropPause, false);
                 break;
@@ -1241,6 +1359,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private async Task OnMpvDisconnected(object? sender, EventArgs e)
     {
         Logger.Info("mpv disconnected — assuming user closed the player");
+        // Live state is gone — fall back to the saved settings (source of
+        // truth) and notify listeners so they re-read the effective state.
+        _currentVolume = null;
+        _currentMuted = null;
+        VolumeStateChanged?.Invoke(this, EventArgs.Empty);
         if (_state is PlaybackState.Playing or PlaybackState.Paused or PlaybackState.Loading)
         {
             await StopAsync();
@@ -1259,14 +1382,23 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             return;
         }
 
-        if (!SettingsProvider.Instance.Settings.RestoreVolume)
+        Logger.Debug("Volume changed to {Volume}", Math.Clamp(volume, 0, MaxMpvVolume));
+        SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, MaxMpvVolume);
+        SettingsProvider.Instance.Save();
+    }
+
+    private void PersistMute(bool muted)
+    {
+        // Same guard as PersistVolume: ignore mute property-changes that fire
+        // during mpv startup before we've restored the saved mute state.
+        if (!_muteRestored)
         {
-            Logger.Trace("Volume change ignored — RestoreVolume is disabled");
+            Logger.Trace("Mute change ignored — mute not yet restored");
             return;
         }
 
-        Logger.Debug("Volume changed to {Volume}", Math.Clamp(volume, 0, 130));
-        SettingsProvider.Instance.Settings.Volume = Math.Clamp(volume, 0, 130);
+        Logger.Debug("Mute changed to {Muted}", muted);
+        SettingsProvider.Instance.Settings.Muted = muted;
         SettingsProvider.Instance.Save();
     }
 
@@ -1357,6 +1489,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
+
+        // Live state is gone — effective volume/mute fall back to settings.
+        _currentVolume = null;
+        _currentMuted = null;
+        VolumeStateChanged?.Invoke(this, EventArgs.Empty);
 
         _discord.Shutdown();
 
