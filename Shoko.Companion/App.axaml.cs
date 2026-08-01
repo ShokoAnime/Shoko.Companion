@@ -502,13 +502,13 @@ public partial class App : Application
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
-            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            NextItem = hideInfo ? null : _coordinator.NextItem,
+            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = args.NewState == PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -537,11 +537,11 @@ public partial class App : Application
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
-            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
             Position = position,
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            NextItem = hideInfo ? null : _coordinator.NextItem,
+            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -570,11 +570,11 @@ public partial class App : Application
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
-            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            NextItem = hideInfo ? null : _coordinator.NextItem,
+            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -606,13 +606,13 @@ public partial class App : Application
         return new PlaybackStateUpdateDto
         {
             State = state,
-            VideoId = hideInfo ? null : _coordinator.CurrentFileId,
-            Title = hideInfo ? null : _coordinator.CurrentTitle,
+            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            StreamUrl = hideInfo ? null : _coordinator.CurrentStreamUrl,
+            NextItem = hideInfo ? null : _coordinator.NextItem,
+            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,

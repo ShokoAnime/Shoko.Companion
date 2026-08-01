@@ -26,7 +26,7 @@ public static class ShokoAuth
     /// <param name="username">Shoko username.</param>
     /// <param name="password">Shoko password.</param>
     /// <param name="ct">Optional cancellation token.</param>
-    public static async Task<AuthAttemptResult> LoginAsync(string baseUrl, string username, string password,
+    public static async Task<AuthAttemptResult> LoginAsync(string baseUrl, string username, string? password,
         CancellationToken ct = default)
     {
         try
@@ -35,7 +35,7 @@ public static class ShokoAuth
             var body = JsonConvert.SerializeObject(new AuthRequestDto
             {
                 User = username,
-                Pass = password,
+                Pass = password ?? string.Empty,
                 Device = DeviceInfo.DeviceName
             });
             var content = new StringContent(body, Encoding.UTF8, "application/json");

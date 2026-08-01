@@ -91,7 +91,7 @@ public class PlaybackSessionManager
     public bool HasActiveSession => _session is not null;
 
     /// <summary>The file ID of the current session, or null.</summary>
-    public int? CurrentFileId => _session?.FileId;
+    public int? CurrentVideoId => _session?.VideoId;
 
     /// <summary>The last known playback position in milliseconds.</summary>
     public double CurrentPositionMs => _session?.PositionMs ?? 0;
@@ -109,7 +109,7 @@ public class PlaybackSessionManager
         var settings = SettingsProvider.Instance.Settings;
         _session = new PlaybackSession
         {
-            FileId = fileId,
+            VideoId = fileId,
             PositionMs = resumePositionMs,
             InitialPositionMs = resumePositionMs,
             DurationMs = durationMs,
@@ -251,7 +251,7 @@ public class PlaybackSessionManager
             watched = true;
         }
 
-        var fileId = _session.FileId;
+        var fileId = _session.VideoId;
         var position = _session.PositionMs;
         var isRestricted = _session.IsRestricted;
         var videoStreamId = _session.VideoStreamId;
@@ -311,7 +311,7 @@ public class PlaybackSessionManager
             watched = true;
         }
 
-        var fileId = _session.FileId;
+        var fileId = _session.VideoId;
         var position = _session.PositionMs;
         var isRestricted = _session.IsRestricted;
         var videoStreamId = _session.VideoStreamId;
@@ -347,7 +347,7 @@ public class PlaybackSessionManager
     {
         if (_session is null) return;
 
-        _session.FileId = fileId;
+        _session.VideoId = fileId;
         _session.PositionMs = resumePositionMs;
         _session.InitialPositionMs = resumePositionMs;
         _session.DurationMs = durationMs;
@@ -449,7 +449,7 @@ public class PlaybackSessionManager
 
         Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
         {
-            FileId = _session.FileId,
+            FileId = _session.VideoId,
             EventType = eventType,
             Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
             IsWatched = watched
@@ -548,7 +548,7 @@ public class PlaybackSessionManager
 
     private class PlaybackSession
     {
-        public int FileId;
+        public int VideoId;
         public double PositionMs;
         public double InitialPositionMs;
         public double DurationMs;

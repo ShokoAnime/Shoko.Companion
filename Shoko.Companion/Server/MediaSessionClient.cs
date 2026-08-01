@@ -149,6 +149,18 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await _coordinator.ResumeAsync();
         });
 
+        _connection.On("SkipNext", async () =>
+        {
+            Logger.Info("MediaSession: SkipNext command received");
+            await _coordinator.SkipNextAsync();
+        });
+
+        _connection.On("SkipPrevious", async () =>
+        {
+            Logger.Info("MediaSession: SkipPrevious command received");
+            await _coordinator.SkipPreviousAsync();
+        });
+
         _connection.On<TimeSpan>("Seek", async position =>
         {
             Logger.Info("MediaSession: Seek to {Position}", position);
@@ -383,12 +395,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
                 State = "Idle",
-                VideoId = null,
-                Title = null,
-                MediaType = null,
                 Position = TimeSpan.Zero,
                 Duration = null,
-                StreamUrl = null,
                 IsPaused = false,
             });
         }
@@ -418,6 +426,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             CanScreenshotAtPosition = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
             MaxVolume = PlaybackCoordinator.MaxMpvVolume,
             CanSetVolume = s.AllowRemoteVolumeControl && !privacyOverrideControl,
+            CanSkipItems = s.AllowRemotePlay && !privacyOverrideControl,
         };
     }
 
@@ -531,6 +540,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanSetVolume")]
         public bool CanSetVolume { get; init; } = false;
+
+        [JsonProperty("CanSkipItems")]
+        public bool CanSkipItems { get; init; } = true;
     }
 
     private sealed class SessionInfoDto
@@ -598,34 +610,22 @@ public sealed class PlaybackStateUpdateDto
     public string State { get; init; } = "Idle";
 
     /// <summary>
-    /// The Shoko video ID, if managed by Shoko.
+    /// The currently playing media item, or null if none.
     /// </summary>
-    [JsonProperty("VideoId")]
-    public int? VideoId { get; init; }
-
-    /// <summary>
-    /// Title of the currently playing media.
-    /// </summary>
-    [JsonProperty("Title")]
-    public string? Title { get; init; }
-
-    /// <summary>
-    /// Media type: "video", "audio", or "unknown".
-    /// </summary>
-    [JsonProperty("MediaType")]
-    public string? MediaType { get; init; }
-
-    /// <summary>
-    /// Thumbnail or poster URL, if available.
-    /// </summary>
-    [JsonProperty("ThumbnailUrl")]
-    public string? ThumbnailUrl { get; init; }
+    [JsonProperty("CurrentItem")]
+    public MediaItemInfoDto? CurrentItem { get; init; }
 
     /// <summary>
     /// Next item in the play queue, or null if none.
     /// </summary>
     [JsonProperty("NextItem")]
-    public NextMediaItemInfoDto? NextItem { get; init; }
+    public MediaItemInfoDto? NextItem { get; init; }
+
+    /// <summary>
+    /// Previous item in the play queue, or null if none.
+    /// </summary>
+    [JsonProperty("PreviousItem")]
+    public MediaItemInfoDto? PreviousItem { get; init; }
 
     /// <summary>
     /// The current playback position.
@@ -656,42 +656,38 @@ public sealed class PlaybackStateUpdateDto
     /// </summary>
     [JsonProperty("IsMuted")]
     public bool? IsMuted { get; init; }
-
-    /// <summary>
-    /// Stream URL the player is using, if known.
-    /// </summary>
-    [JsonProperty("StreamUrl")]
-    public string? StreamUrl { get; init; }
 }
 
 /// <summary>
-/// DTO for the next item in the play queue, mirroring the server's NextMediaItemInfo.
+/// Lean media item info sent in state updates, mirroring the server's
+/// PlaybackStateUpdateMediaItemInfo.
 /// </summary>
-public sealed class NextMediaItemInfoDto
+public sealed class MediaItemInfoDto
 {
     /// <summary>
-    /// Human-readable title, or null if no next item.
+    /// Human-readable title, or null if unknown.
     /// </summary>
     [JsonProperty("Title")]
     public string? Title { get; init; }
 
     /// <summary>
-    /// Media type hint: "video" or "audio". Null if unknown.
+    /// Media type hint: "video", "audio", or "unknown".
     /// </summary>
     [JsonProperty("MediaType")]
     public string? MediaType { get; init; }
 
     /// <summary>
-    /// Shoko video ID, if the next item is managed by Shoko.
+    /// Shoko video ID, if the item is managed by Shoko.
     /// </summary>
     [JsonProperty("VideoId")]
     public int? VideoId { get; init; }
 
     /// <summary>
-    /// Thumbnail or poster URL for the next item, if available.
+    /// Stream URL for the item, if known. Used for items that are
+    /// not Shoko-managed (no <see cref="VideoId"/>).
     /// </summary>
-    [JsonProperty("ThumbnailUrl")]
-    public string? ThumbnailUrl { get; init; }
+    [JsonProperty("StreamUrl")]
+    public string? StreamUrl { get; init; }
 }
 
 /// <summary>

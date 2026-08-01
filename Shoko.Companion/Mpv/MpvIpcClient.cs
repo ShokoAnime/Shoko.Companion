@@ -242,6 +242,17 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
     }
 
     /// <summary>
+    /// Append a URL as a playlist (e.g. an m3u8) without interrupting current
+    /// playback. Uses <c>loadlist</c> so mpv parses the list eagerly and each
+    /// entry appears in the playlist immediately, instead of being lazily
+    /// expanded into internal entries when played.
+    /// </summary>
+    public async Task AppendListAsync(string url, CancellationToken ct = default)
+    {
+        await SendCommandAndCheckAsync("loadlist", [url, "append"], ct);
+    }
+
+    /// <summary>
     /// Set an mpv property.
     /// </summary>
     public async Task SetPropertyAsync(string name, object value, CancellationToken ct = default)

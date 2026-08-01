@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Shoko.Companion.Server;
 
 namespace Shoko.Companion.Playback;
 
@@ -15,9 +16,21 @@ public interface IPlaybackCoordinator
     PlaybackState CurrentState { get; }
 
     /// <summary>
-    /// Gets the file ID of the currently playing media, if any.
+    /// Gets the previous item in the play queue, or null when there is none.
     /// </summary>
-    int? CurrentFileId { get; }
+    MediaItemInfoDto? PreviousItem { get; }
+
+    /// <summary>
+    /// Gets the currently playing queue item, or null when playback is
+    /// stopped/idle.
+    /// </summary>
+    MediaItemInfoDto? CurrentItem { get; }
+
+    /// <summary>
+    /// Gets the next item in the play queue, or null when there is none
+    /// (single-item queue, end of queue, or playback stopped/idle).
+    /// </summary>
+    MediaItemInfoDto? NextItem { get; }
 
     /// <summary>
     /// Gets the current playback position in seconds.
@@ -28,16 +41,6 @@ public interface IPlaybackCoordinator
     /// Gets the duration of the currently playing media in seconds, if known.
     /// </summary>
     double? DurationSeconds { get; }
-
-    /// <summary>
-    /// Gets the title of the currently playing media, if any.
-    /// </summary>
-    string? CurrentTitle { get; }
-
-    /// <summary>
-    /// Gets the stream URL of the currently playing media, if any.
-    /// </summary>
-    string? CurrentStreamUrl { get; }
 
     /// <summary>
     /// Gets the effective volume level (0–<see cref="PlaybackCoordinator.MaxMpvVolume"/>).
@@ -100,6 +103,16 @@ public interface IPlaybackCoordinator
     /// Resume mpv.
     /// </summary>
     Task ResumeAsync();
+
+    /// <summary>
+    /// Skip to the next item in the play queue, if any.
+    /// </summary>
+    Task SkipNextAsync();
+
+    /// <summary>
+    /// Skip to the previous item in the play queue, if any.
+    /// </summary>
+    Task SkipPreviousAsync();
 
     /// <summary>
     /// Seek to the specified position in seconds.

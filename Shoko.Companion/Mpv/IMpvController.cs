@@ -61,6 +61,12 @@ public interface IMpvController
     Task AppendFileAsync(string url, CancellationToken ct = default);
 
     /// <summary>
+    /// Append a URL as a playlist (e.g. an m3u8) without interrupting current
+    /// playback. Uses <c>loadlist</c> so entries are parsed eagerly.
+    /// </summary>
+    Task AppendListAsync(string url, CancellationToken ct = default);
+
+    /// <summary>
     /// Set an mpv property.
     /// </summary>
     Task SetPropertyAsync(string name, object value, CancellationToken ct = default);
