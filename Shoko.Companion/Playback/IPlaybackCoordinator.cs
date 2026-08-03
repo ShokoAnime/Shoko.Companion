@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Shoko.Companion.Server;
 
@@ -31,6 +32,15 @@ public interface IPlaybackCoordinator
     /// (single-item queue, end of queue, or playback stopped/idle).
     /// </summary>
     MediaItemInfoDto? NextItem { get; }
+
+    /// <summary>
+    ///   Gets the full mpv playlist as observed from mpv itself — the
+    ///   ground truth for the queue, including user-initiated navigation.
+    ///   Each entry carries the same <see cref="MediaItemInfoDto.StreamUrl"/>
+    ///   that is reported for that item in state updates, preserving exact
+    ///   stream URL identity. Empty when there is no playlist.
+    /// </summary>
+    IReadOnlyList<MediaItemInfoDto> CurrentPlaylist { get; }
 
     /// <summary>
     /// Gets the current playback position in seconds.
@@ -71,6 +81,13 @@ public interface IPlaybackCoordinator
     ///   Raised when the current volume or mute state changes.
     /// </summary>
     event EventHandler? VolumeStateChanged;
+
+    /// <summary>
+    ///   Raised when the mpv playlist changes (add/remove/move/jump or
+    ///   user-initiated navigation), so listeners can report the full
+    ///   playlist to the media session hub via <c>UpdatePlaylist</c>.
+    /// </summary>
+    event EventHandler? PlaylistChanged;
 
     /// <summary>
     /// Play a shoko: URL (handles m3u8 ↔ JSON resolution, mpv launch, scrobble, etc).
@@ -131,6 +148,50 @@ public interface IPlaybackCoordinator
     ///   Optional. Whether audio should be muted.
     /// </param>
     Task SetVolumeAsync(int? volume, bool? muted);
+
+    /// <summary>
+    ///   Jump directly to the playlist item whose stream URL matches
+    ///   <paramref name="streamUrl"/>, starting playback of that item.
+    /// </summary>
+    /// <param name="streamUrl">
+    ///   The exact stream URL reported for the item in state updates.
+    /// </param>
+    Task JumpToPlaylistItemAsync(string streamUrl);
+
+    /// <summary>
+    ///   Add media (as <c>shoko://</c> play URLs) to the mpv playlist,
+    ///   inserting at <paramref name="atIndex"/> when given, appending
+    ///   otherwise. The new full playlist is reported afterwards.
+    /// </summary>
+    /// <param name="shokoUrls">
+    ///   The <c>shoko://</c> play URLs to resolve and add.
+    /// </param>
+    /// <param name="atIndex">
+    ///   Optional zero-based insertion index; <c>null</c> appends.
+    /// </param>
+    Task AddToPlaylistAsync(IReadOnlyList<string> shokoUrls, int? atIndex);
+
+    /// <summary>
+    ///   Remove items whose stream URL matches an entry in
+    ///   <paramref name="streamUrls"/> from the mpv playlist.
+    ///   The new full playlist is reported afterwards.
+    /// </summary>
+    /// <param name="streamUrls">
+    ///   The exact stream URLs of the items to remove.
+    /// </param>
+    Task RemoveFromPlaylistAsync(IReadOnlyList<string> streamUrls);
+
+    /// <summary>
+    ///   Move a playlist item from one index to another in mpv.
+    ///   The new full playlist is reported afterwards.
+    /// </summary>
+    /// <param name="fromIndex">
+    ///   Zero-based source index.
+    /// </param>
+    /// <param name="toIndex">
+    ///   Zero-based destination index (final position).
+    /// </param>
+    Task MovePlaylistItemAsync(int fromIndex, int toIndex);
 
     /// <summary>
     ///   Capture a video frame. When <paramref name="position"/> is null,

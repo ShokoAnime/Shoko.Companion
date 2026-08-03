@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using System.Threading;
@@ -187,6 +189,70 @@ public sealed class MediaSessionClient : IAsyncDisposable
             }
         });
 
+        _connection.On<string>("JumpToPlaylistItem", async streamUrl =>
+        {
+            Logger.Info("MediaSession: JumpToPlaylistItem command received");
+            try
+            {
+                await _coordinator.JumpToPlaylistItemAsync(streamUrl);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle JumpToPlaylistItem command");
+            }
+        });
+
+        _connection.On<IReadOnlyList<int>, int?>("AddToPlaylist", async (videoIds, atIndex) =>
+        {
+            Logger.Info("MediaSession: AddToPlaylist command received ({Count} items at index {Index})",
+                videoIds?.Count ?? 0, atIndex);
+            try
+            {
+                if (videoIds is { Count: > 0 })
+                {
+                    // Resolve each video ID to a shoko:// URL the same way
+                    // the Play command does; the coordinator handles the
+                    // rest of the resolution pipeline.
+                    var uri = new Uri(_baseUrl);
+                    var shokoUrls = videoIds
+                        .Select(id => $"shoko://{uri.Authority}/play?playlist=f{id}")
+                        .ToList();
+                    await _coordinator.AddToPlaylistAsync(shokoUrls, atIndex);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle AddToPlaylist command");
+            }
+        });
+
+        _connection.On<IReadOnlyList<string>>("RemoveFromPlaylist", async streamUrls =>
+        {
+            Logger.Info("MediaSession: RemoveFromPlaylist command received");
+            try
+            {
+                await _coordinator.RemoveFromPlaylistAsync(streamUrls);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle RemoveFromPlaylist command");
+            }
+        });
+
+        _connection.On<int, int>("MovePlaylistItem", async (fromIndex, toIndex) =>
+        {
+            Logger.Info("MediaSession: MovePlaylistItem command received ({From} -> {To})",
+                fromIndex, toIndex);
+            try
+            {
+                await _coordinator.MovePlaylistItemAsync(fromIndex, toIndex);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle MovePlaylistItem command");
+            }
+        });
+
         _connection.On<ScreenshotRequestDto>("RequestScreenshot", async request =>
         {
             Logger.Info("MediaSession: Screenshot requested (position={Position})", request.Position);
@@ -273,7 +339,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             try
             {
                 var result = await _connection.InvokeAsync<SessionInfoDto>(
-                    "ReconnectSession", _sessionId.Value, _lastState);
+                    "ReconnectSession", _sessionId.Value, _lastState, _coordinator.CurrentPlaylist);
                 _sessionId = result.SessionId;
                 Logger.Info("MediaSession: Reconnected to session {SessionId}", _sessionId.Value);
 
@@ -323,7 +389,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Capabilities = BuildCurrentCapabilities(),
             };
 
-            var result = await _connection.InvokeAsync<SessionInfoDto>("RegisterSession", deviceInfo, _lastState);
+            var result = await _connection.InvokeAsync<SessionInfoDto>(
+                "RegisterSession", deviceInfo, _lastState, _coordinator.CurrentPlaylist);
             _sessionId = result.SessionId;
             Logger.Info("MediaSession: Registered as session {SessionId}", _sessionId.Value);
         }
@@ -358,6 +425,27 @@ public sealed class MediaSessionClient : IAsyncDisposable
         // after a grace period. Any new play/pause/resume cancels it.
         if (state.State == "Stopped")
             StartStoppedTimer();
+    }
+
+    /// <summary>
+    /// Report the full playlist to the hub, independent of state updates.
+    /// </summary>
+    /// <param name="items">
+    ///   The full playlist items in order. Pass an empty list when idle.
+    /// </param>
+    public async Task ReportPlaylistAsync(IReadOnlyList<MediaItemInfoDto> items)
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+            return;
+
+        try
+        {
+            await _connection.InvokeAsync("UpdatePlaylist", items);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "MediaSession: Failed to report playlist");
+        }
     }
 
     /// <summary>
@@ -427,6 +515,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
             MaxVolume = PlaybackCoordinator.MaxMpvVolume,
             CanSetVolume = s.AllowRemoteVolumeControl && !privacyOverrideControl,
             CanSkipItems = s.AllowRemotePlay && !privacyOverrideControl,
+            // mpv supports the full playlist contract (provide/reorder/jump),
+            // gated on the same remote-play setting/privacy rules as the
+            // other remote commands.
+            CanProvidePlaylist = s.AllowRemotePlay && !privacyOverrideControl,
+            CanReorderPlaylist = s.AllowRemotePlay && !privacyOverrideControl,
+            CanJumpToPlaylistItem = s.AllowRemotePlay && !privacyOverrideControl,
         };
     }
 
@@ -543,6 +637,15 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanSkipItems")]
         public bool CanSkipItems { get; init; } = true;
+
+        [JsonProperty("CanProvidePlaylist")]
+        public bool CanProvidePlaylist { get; init; } = false;
+
+        [JsonProperty("CanReorderPlaylist")]
+        public bool CanReorderPlaylist { get; init; } = false;
+
+        [JsonProperty("CanJumpToPlaylistItem")]
+        public bool CanJumpToPlaylistItem { get; init; } = false;
     }
 
     private sealed class SessionInfoDto

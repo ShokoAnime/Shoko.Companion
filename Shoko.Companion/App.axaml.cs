@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -73,6 +74,7 @@ public partial class App : Application
         _coordinator.StateChanged += OnCoordinatorStateChanged;
         _coordinator.PositionTick += OnCoordinatorPositionTick;
         _coordinator.VolumeStateChanged += OnCoordinatorVolumeStateChanged;
+        _coordinator.PlaylistChanged += OnCoordinatorPlaylistChanged;
 
         // Auto-connect Media Session if configured and enabled
         var sessionSettings = SettingsProvider.Instance.Settings;
@@ -579,6 +581,25 @@ public partial class App : Application
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
         });
+    }
+
+    /// <summary>
+    ///   Raised when the mpv playlist changes. Reports the full playlist to
+    ///   the media session hub so the server (and dashboard) stay in sync.
+    ///   Honors privacy mode by sending an empty playlist.
+    /// </summary>
+    private void OnCoordinatorPlaylistChanged(object? sender, EventArgs args)
+    {
+        if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
+            return;
+
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
+        IReadOnlyList<MediaItemInfoDto> playlist = hideInfo
+            ? []
+            : _coordinator.CurrentPlaylist;
+
+        _ = MediaSessionClient.ReportPlaylistAsync(playlist);
     }
 
     /// <summary>

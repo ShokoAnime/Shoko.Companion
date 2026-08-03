@@ -140,6 +140,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         : null;
 
     /// <inheritdoc/>
+    public IReadOnlyList<MediaItemInfoDto> CurrentPlaylist => _mpvPlaylistEntries ?? [];
+
+    /// <inheritdoc/>
     public double CurrentPositionSeconds => _sessionManager.CurrentPositionMs / 1000.0;
 
     /// <inheritdoc/>
@@ -167,6 +170,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     ///   listeners can re-report state to the media session hub.
     /// </summary>
     public event EventHandler? VolumeStateChanged;
+
+    /// <summary>
+    ///   Raised when the mpv playlist changes (add/remove/move/jump or
+    ///   user-initiated navigation), so the media session hub can be kept
+    ///   in sync via <c>UpdatePlaylist</c>.
+    /// </summary>
+    public event EventHandler? PlaylistChanged;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
@@ -602,6 +612,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _streamInitPhase = false;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
+        PlaylistChanged?.Invoke(this, EventArgs.Empty);
 
         SetState(PlaybackState.Stopped);
     }
@@ -712,6 +723,191 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         if (osdMessages.Count > 0)
             await ShowOsdTextAsync(string.Join("\n", osdMessages));
+    }
+
+    /// <inheritdoc/>
+    public async Task JumpToPlaylistItemAsync(string streamUrl)
+    {
+        if (string.IsNullOrWhiteSpace(streamUrl) || !_mpv.IsConnected)
+        {
+            Logger.Debug("JumpToPlaylistItem ignored — no stream URL or mpv unavailable");
+            return;
+        }
+
+        // Sync the observed playlist cache with mpv's actual state so the
+        // stream-URL match below operates on fresh data.
+        await RefreshPlaylistFromMpvAsync();
+
+        var index = FindPlaylistIndexByStreamUrl(streamUrl);
+        if (index < 0)
+        {
+            Logger.Warn("JumpToPlaylistItem: no playlist entry matches stream URL {StreamUrl}",
+                streamUrl);
+            return;
+        }
+
+        try
+        {
+            await _mpv.SendCommandAsync("playlist-play-index", [index]);
+            Logger.Info("JumpToPlaylistItem: playing playlist index {Index}", index);
+            await RefreshPlaylistFromMpvAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to jump to playlist item");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task AddToPlaylistAsync(IReadOnlyList<string> shokoUrls, int? atIndex)
+    {
+        if (shokoUrls is null || shokoUrls.Count == 0)
+            return;
+
+        if (!_mpv.IsConnected)
+        {
+            Logger.Debug("AddToPlaylist ignored — mpv not connected");
+            return;
+        }
+
+        // Sync the observed playlist cache with mpv's actual state so the
+        // append start position below is accurate.
+        await RefreshPlaylistFromMpvAsync();
+
+        // Resolve every shoko:// URL to a Shoko m3u8 playlist and extend
+        // the in-memory metadata caches along the way.
+        var m3u8Urls = new List<string>();
+        foreach (var shokoUrl in shokoUrls)
+        {
+            var resolved = await ResolveVideoToPlayableAsync(shokoUrl);
+            if (resolved is not null)
+                m3u8Urls.Add(resolved);
+        }
+
+        if (m3u8Urls.Count == 0)
+        {
+            Logger.Warn("AddToPlaylist: no items could be resolved");
+            return;
+        }
+
+        try
+        {
+            var currentCount = _mpvPlaylistEntries?.Count ?? 0;
+            var insertAt = atIndex is { } i ? Math.Clamp(i, 0, currentCount) : currentCount;
+
+            // Append every new item at the end of the mpv playlist.
+            foreach (var m3u8Url in m3u8Urls)
+                await _mpv.AppendListAsync(m3u8Url);
+
+            // Move the appended block to the requested position. mpv's
+            // playlist-move places the entry at the given final index, so
+            // advancing both positions by one per item keeps the block in
+            // order. No moves needed when appending (insertAt == end).
+            if (insertAt < currentCount)
+            {
+                var pos = currentCount;
+                var dest = insertAt;
+                for (var k = 0; k < m3u8Urls.Count; k++)
+                {
+                    await _mpv.SendCommandAsync("playlist-move", [pos, dest]);
+                    pos++;
+                    dest++;
+                }
+            }
+
+            await RefreshPlaylistFromMpvAsync();
+            Logger.Info("AddToPlaylist: added {Count} items at index {Index}",
+                m3u8Urls.Count, insertAt);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to add to playlist");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveFromPlaylistAsync(IReadOnlyList<string> streamUrls)
+    {
+        if (streamUrls is null || streamUrls.Count == 0)
+            return;
+
+        if (!_mpv.IsConnected)
+        {
+            Logger.Debug("RemoveFromPlaylist ignored — mpv not connected");
+            return;
+        }
+
+        // Sync the observed playlist cache with mpv's actual state so the
+        // index matching below sees every entry currently in the playlist.
+        await RefreshPlaylistFromMpvAsync();
+
+        // Collect the matching indices from the observed playlist cache,
+        // then remove from the highest index down so earlier indices stay
+        // valid for mpv's playlist-remove (which takes an index).
+        var indices = new List<int>();
+        if (_mpvPlaylistEntries is not null)
+        {
+            for (var i = 0; i < _mpvPlaylistEntries.Count; i++)
+            {
+                if (streamUrls.Any(u =>
+                        string.Equals(u, _mpvPlaylistEntries[i].StreamUrl,
+                            StringComparison.Ordinal)))
+                {
+                    indices.Add(i);
+                }
+            }
+        }
+
+        indices.Sort((a, b) => b.CompareTo(a));
+
+        try
+        {
+            foreach (var index in indices)
+                await _mpv.SendCommandAsync("playlist-remove", [index]);
+
+            if (indices.Count > 0)
+            {
+                await RefreshPlaylistFromMpvAsync();
+                Logger.Info("RemoveFromPlaylist: removed {Count} items", indices.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to remove from playlist");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task MovePlaylistItemAsync(int fromIndex, int toIndex)
+    {
+        if (!_mpv.IsConnected)
+        {
+            Logger.Debug("MovePlaylistItem ignored — mpv not connected");
+            return;
+        }
+
+        // Sync the observed playlist cache with mpv's actual state so the
+        // bounds check below is accurate.
+        await RefreshPlaylistFromMpvAsync();
+
+        var count = _mpvPlaylistEntries?.Count ?? 0;
+        if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count)
+        {
+            Logger.Debug("MovePlaylistItem ignored — index out of range ({From} -> {To}, count={Count})",
+                fromIndex, toIndex, count);
+            return;
+        }
+
+        try
+        {
+            await _mpv.SendCommandAsync("playlist-move", [fromIndex, toIndex]);
+            await RefreshPlaylistFromMpvAsync();
+            Logger.Info("MovePlaylistItem: moved {From} -> {To}", fromIndex, toIndex);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to move playlist item");
+        }
     }
 
     /// <inheritdoc/>
@@ -1009,6 +1205,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             Logger.Debug("Playlist property-change with unexpected type: {Type}", data?.GetType().Name);
             _mpvPlaylistEntries = null;
             _mpvCurrentPlaylistIndex = -1;
+            PlaylistChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
 
@@ -1047,6 +1244,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _mpvCurrentPlaylistIndex = currentIndex;
 
         StateChanged?.Invoke(this, new PlaybackStateChangedEventArgs(_state, _state));
+        PlaylistChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void HandlePathChanged(string path)
@@ -1469,6 +1667,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _currentMuted = null;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
+        PlaylistChanged?.Invoke(this, EventArgs.Empty);
         VolumeStateChanged?.Invoke(this, EventArgs.Empty);
         if (_state is PlaybackState.Playing or PlaybackState.Paused or PlaybackState.Loading)
         {
@@ -1876,6 +2075,145 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 };
             }
         }
+    }
+
+    /// <summary>
+    ///   Find the zero-based mpv playlist index of the entry whose stream
+    ///   URL matches <paramref name="streamUrl"/> using ordinal comparison
+    ///   — the same match the server uses to locate the current playlist
+    ///   position. Returns -1 when there is no match.
+    /// </summary>
+    private int FindPlaylistIndexByStreamUrl(string streamUrl)
+    {
+        if (_mpvPlaylistEntries is null)
+            return -1;
+
+        for (var i = 0; i < _mpvPlaylistEntries.Count; i++)
+        {
+            if (string.Equals(_mpvPlaylistEntries[i].StreamUrl, streamUrl,
+                    StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    ///   Re-read the mpv <c>playlist</c> property and refresh the observed
+    ///   playlist cache, raising <see cref="PlaylistChanged"/> so the hub
+    ///   is updated immediately instead of waiting for mpv's async
+    ///   property-change event.
+    /// </summary>
+    private async Task RefreshPlaylistFromMpvAsync()
+    {
+        if (!_mpv.IsConnected)
+        {
+            if (_mpvPlaylistEntries is not null)
+            {
+                _mpvPlaylistEntries = null;
+                _mpvCurrentPlaylistIndex = -1;
+                PlaylistChanged?.Invoke(this, EventArgs.Empty);
+            }
+            return;
+        }
+
+        try
+        {
+            var array = await _mpv.GetPropertyAsync<Newtonsoft.Json.Linq.JArray>(MpvPropPlaylist);
+            if (array is null)
+                return;
+
+            HandleMpvPlaylistChanged(array);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Failed to refresh mpv playlist after mutation");
+        }
+    }
+
+    /// <summary>
+    ///   Resolve a <c>shoko://</c> play URL to a Shoko <c>Generate.m3u8</c>
+    ///   URL, extending the in-memory playlist/metadata caches so newly
+    ///   added items scrobble correctly when they start playing. Returns
+    ///   null when the URL cannot be resolved.
+    /// </summary>
+    private async Task<string?> ResolveVideoToPlayableAsync(string shokoUrl)
+    {
+        var parsed = ShokoUrlParser.Parse(shokoUrl);
+        if (parsed is not { IsPlayAction: true })
+        {
+            Logger.Warn("AddToPlaylist: unsupported URL {ShokoUrl}", shokoUrl);
+            return null;
+        }
+
+        var baseUrl = await RouteResolver.ResolveBestBaseUrlAsync(parsed.ServerBaseUrl);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return null;
+
+        var apiKey = await ResolveCredentialsAsync(baseUrl);
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return null;
+
+        _apiClient.SetApiKey(apiKey);
+        _apiClient.SetBaseUrl(baseUrl);
+
+        var jsonUrl = $"{baseUrl}/api/v3/Playlist/Generate?playlist={parsed.PlaylistId}&include=MediaInfo&apikey={apiKey}";
+        var items = await FetchPlaylistWithRetryAsync(baseUrl, jsonUrl);
+        if (items is null || items.Count == 0)
+        {
+            Logger.Warn("AddToPlaylist: no files returned for {ShokoUrl}", shokoUrl);
+            return null;
+        }
+
+        // Extend our item/metadata tracking so the added file is scrobbled
+        // and track-restored like any other playlist item.
+        _playlistItems ??= [];
+        _playlistItems.AddRange(items);
+        CacheMediaInfo(items);
+
+        var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
+        var newMetadata = await ParseM3u8Async(m3u8Url);
+        foreach (var kvp in newMetadata)
+            _streamMetadata[kvp.Key] = kvp.Value;
+        EnrichStreamMetadataFromPlaylist(items, _streamMetadata);
+
+        return m3u8Url;
+    }
+
+    /// <summary>
+    ///   Fetch a playlist JSON document, retrying once after invalidating a
+    ///   stored API key when the server responds with 401.
+    /// </summary>
+    private async Task<List<PlaylistItemDto>?> FetchPlaylistWithRetryAsync(
+        string baseUrl, string jsonUrl)
+    {
+        var items = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+
+        if (items is null && _apiClient.LastResponseWasUnauthorized == true)
+        {
+            var badRouteKey = RouteResolver.ExtractRouteKey(baseUrl);
+            if (badRouteKey is not null)
+            {
+                var badConn = SettingsProvider.Instance.Settings.GetConnectionByRouteKey(badRouteKey);
+                if (badConn is not null)
+                {
+                    Logger.Info("Clearing stored API key for '{Name}' (401 on playlist fetch)", badConn.Name);
+                    badConn.ApiKey = null;
+                    SettingsProvider.Instance.Save();
+                }
+            }
+
+            var newKey = await ResolveCredentialsAsync(baseUrl);
+            if (newKey is not null)
+            {
+                _apiClient.SetApiKey(newKey);
+                items = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+            }
+        }
+
+        return items;
     }
 
     [GeneratedRegex(@"/File/(\d+)/Stream", RegexOptions.IgnoreCase)]
