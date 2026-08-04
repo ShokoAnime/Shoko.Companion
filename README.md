@@ -99,7 +99,7 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 |-----|------|---------|-------------|
 | `Connections` | array | `[]` | List of server connections (see below). |
 | `MpvPath` | string | `null` | Path to the mpv binary. Auto-discovered and saved on first use. |
-| `MpvFullScreen` | bool | `true` | Launch mpv in full-screen mode. |
+| `IsFullscreen` | bool | `true` | Saved current fullscreen state. Restored when mpv connects and persisted on every change. Replaces the old `MpvFullScreen` launch toggle. |
 | `OnNewUrlAction` | string | `"Append"` | When a new `shoko:` URL arrives while playing: `"Replace"` (stop + start new), `"Ignore"` (silently discard), or `"Append"` (add to mpv playlist). |
 | `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing (start/end/pause/resume). |
 | `PlaybackSyncingBehavior` | enum | `AfterPlayback` | How aggressively to sync playback events: `AfterPlayback` (stop only), `OnEveryEvent` (play/pause/resume/stop), `LiveSync` (everything + periodic progress). |

@@ -67,6 +67,19 @@ public interface IPlaybackCoordinator
     bool CurrentMuted { get; }
 
     /// <summary>
+    ///   Gets the current playback speed multiplier from mpv (e.g. 1.0, 4.0).
+    ///   Defaults to 1.0 when mpv is not connected or the value is unknown.
+    /// </summary>
+    double CurrentPlaybackSpeed { get; }
+
+    /// <summary>
+    /// Gets whether the mpv window is currently fullscreen. When mpv is
+    /// connected this is the live mpv value; otherwise it falls back to the
+    /// saved settings value, which defaults to true.
+    /// </summary>
+    bool? CurrentFullscreen { get; }
+
+    /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
     event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
@@ -81,6 +94,12 @@ public interface IPlaybackCoordinator
     ///   Raised when the current volume or mute state changes.
     /// </summary>
     event EventHandler? VolumeStateChanged;
+
+    /// <summary>
+    ///   Raised when the current playback speed or fullscreen state changes,
+    ///   so listeners can re-report state to the media session hub.
+    /// </summary>
+    event EventHandler? ViewStateChanged;
 
     /// <summary>
     ///   Raised when the mpv playlist changes (add/remove/move/jump or
@@ -148,6 +167,22 @@ public interface IPlaybackCoordinator
     ///   Optional. Whether audio should be muted.
     /// </param>
     Task SetVolumeAsync(int? volume, bool? muted);
+
+    /// <summary>
+    ///   Set the mpv playback speed multiplier (e.g. 1.0 for normal speed,
+    ///   4.0 for 4x). No-op when mpv is not connected.
+    /// </summary>
+    /// <param name="rate">The playback speed multiplier to apply.</param>
+    Task SetPlaybackRateAsync(double rate);
+
+    /// <summary>
+    ///   Toggle the mpv window fullscreen state. No-op when mpv is not
+    ///   connected.
+    /// </summary>
+    /// <param name="isFullscreen">
+    ///   Whether the player window should be fullscreen.
+    /// </param>
+    Task SetFullscreenAsync(bool isFullscreen);
 
     /// <summary>
     ///   Jump directly to the playlist item whose stream URL matches

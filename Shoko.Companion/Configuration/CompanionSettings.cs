@@ -209,15 +209,18 @@ public class CompanionSettings
     public PlaybackSyncingBehavior PlaybackSyncingBehavior { get; set; } = PlaybackSyncingBehavior.AfterPlayback;
 
     /// <summary>
-    /// When true, launches mpv in full screen mode.
-    /// </summary>
-    public bool MpvFullScreen { get; set; } = true;
-
-    /// <summary>
     /// When true, mpv starts playback in a paused state so the user
     /// can manually resume when ready.
     /// </summary>
     public bool MpvStartPaused { get; set; }
+
+    /// <summary>
+    /// The saved fullscreen state, or false if never set. This is the
+    /// source of truth for fullscreen: always restored when mpv connects,
+    /// and always persisted when the fullscreen state changes (even while
+    /// mpv is not running, so the value applies on the next play).
+    /// </summary>
+    public bool IsFullscreen { get; set; } = true;
 
     /// <summary>
     /// The saved volume level (0–130), or null if never set. This is the

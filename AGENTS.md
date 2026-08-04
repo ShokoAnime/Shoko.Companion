@@ -99,7 +99,9 @@ Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
 
 ### Global
 - `MpvPath` — optional override for mpv binary
-- `MpvFullScreen` — launch mpv in full screen (default `true`)
+- `IsFullscreen` — saved current fullscreen state, source of truth; restored
+  on mpv connect and persisted on every change (default `true`, replaces
+  the old `MpvFullScreen` launch toggle)
 - `OnNewUrlAction` — `Replace` / `Ignore` / `Append` (default `Append`)
 - `PlaybackSyncingEnabled` — master toggle for scrobbling (default `true`)
 - `PlaybackSyncingBehavior` — `AfterPlayback` / `OnEveryEvent` / `LiveSync` (default `AfterPlayback`)

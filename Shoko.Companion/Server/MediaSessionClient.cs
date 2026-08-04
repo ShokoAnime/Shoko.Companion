@@ -189,6 +189,33 @@ public sealed class MediaSessionClient : IAsyncDisposable
             }
         });
 
+        _connection.On<double>("SetPlaybackRate", async rate =>
+        {
+            Logger.Info("MediaSession: SetPlaybackRate command received (rate={Rate})", rate);
+            try
+            {
+                await _coordinator.SetPlaybackRateAsync(rate);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle SetPlaybackRate command");
+            }
+        });
+
+        _connection.On<bool>("SetFullscreen", async isFullscreen =>
+        {
+            Logger.Info("MediaSession: SetFullscreen command received (isFullscreen={IsFullscreen})",
+                isFullscreen);
+            try
+            {
+                await _coordinator.SetFullscreenAsync(isFullscreen);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle SetFullscreen command");
+            }
+        });
+
         _connection.On<string>("JumpToPlaylistItem", async streamUrl =>
         {
             Logger.Info("MediaSession: JumpToPlaylistItem command received");
@@ -515,6 +542,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
             MaxVolume = PlaybackCoordinator.MaxMpvVolume,
             CanSetVolume = s.AllowRemoteVolumeControl && !privacyOverrideControl,
             CanSkipItems = s.AllowRemotePlay && !privacyOverrideControl,
+            // mpv supports both the `speed` and `fullscreen` properties, so
+            // remote control is gated on the same setting/privacy rules.
+            CanChangePlaybackRate = s.AllowRemotePlay && !privacyOverrideControl,
+            CanChangeFullscreen = s.AllowRemotePlay && !privacyOverrideControl,
             // mpv supports the full playlist contract (provide/reorder/jump),
             // gated on the same remote-play setting/privacy rules as the
             // other remote commands.
@@ -638,6 +669,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
         [JsonProperty("CanSkipItems")]
         public bool CanSkipItems { get; init; } = true;
 
+        [JsonProperty("CanChangePlaybackRate")]
+        public bool CanChangePlaybackRate { get; init; } = false;
+
+        [JsonProperty("CanChangeFullscreen")]
+        public bool CanChangeFullscreen { get; init; } = false;
+
         [JsonProperty("CanProvidePlaylist")]
         public bool CanProvidePlaylist { get; init; } = false;
 
@@ -759,6 +796,20 @@ public sealed class PlaybackStateUpdateDto
     /// </summary>
     [JsonProperty("IsMuted")]
     public bool? IsMuted { get; init; }
+
+    /// <summary>
+    /// The current playback speed multiplier (e.g. 1.0, 4.0), or null
+    /// when unknown.
+    /// </summary>
+    [JsonProperty("PlaybackSpeed")]
+    public double? PlaybackSpeed { get; init; }
+
+    /// <summary>
+    /// Whether the player window is currently fullscreen, or null when
+    /// unknown.
+    /// </summary>
+    [JsonProperty("IsFullscreen")]
+    public bool? IsFullscreen { get; init; }
 }
 
 /// <summary>

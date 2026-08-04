@@ -64,8 +64,6 @@
                             Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>
                 </Grid>
 
-                <CheckBox Name="MpvFullScreenCheck" Content="Start in full screen"
-                          IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="MpvStartPausedCheck" Content="Start playback paused"
                           IsCheckedChanged="OnAutoSaveSetting"/>
 

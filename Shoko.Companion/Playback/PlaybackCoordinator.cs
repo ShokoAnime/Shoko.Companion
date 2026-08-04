@@ -37,6 +37,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     private const string MpvPropSid = "sid";
     private const string MpvPropVolume = "volume";
     private const string MpvPropMute = "mute";
+    private const string MpvPropSpeed = "speed";
+    private const string MpvPropFullscreen = "fullscreen";
     private const string MpvPropPlaylist = "playlist";
 
     // ── Max volume ──────────────────────────────────────────────────────
@@ -103,11 +105,23 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     // settings.
     private bool _muteRestored;
 
+    // False until the saved fullscreen state has been restored after mpv
+    // connects. Prevents the initial mpv property-change for fullscreen (which
+    // fires at startup with mpv's default value) from overwriting the persisted
+    // fullscreen state in settings.
+    private bool _fullscreenRestored;
+
     // Live mpv volume/mute values, when known. Null once mpv is not connected
     // so CurrentVolume/CurrentMuted fall back to the saved settings (which are
     // the source of truth when mpv is not running).
     private int? _currentVolume;
     private bool? _currentMuted;
+
+    // Live mpv playback speed/fullscreen values, when known. Null once mpv is
+    // not connected so CurrentPlaybackSpeed falls back to 1.0 (mpv's default)
+    // and CurrentFullscreen falls back to the saved setting.
+    private double? _currentPlaybackSpeed;
+    private bool? _currentFullscreen;
 
     private bool _pendingSeek;
 
@@ -154,6 +168,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     /// <inheritdoc/>
     public bool CurrentMuted => _currentMuted ?? SettingsProvider.Instance.Settings.Muted;
 
+    /// <inheritdoc/>
+    public double CurrentPlaybackSpeed => _currentPlaybackSpeed ?? 1.0;
+
+    /// <inheritdoc/>
+    public bool? CurrentFullscreen => _currentFullscreen ?? SettingsProvider.Instance.Settings.IsFullscreen;
+
     /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
@@ -170,6 +190,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     ///   listeners can re-report state to the media session hub.
     /// </summary>
     public event EventHandler? VolumeStateChanged;
+
+    /// <summary>
+    ///   Raised when the current playback speed or fullscreen state changes,
+    ///   so listeners can re-report state to the media session hub.
+    /// </summary>
+    public event EventHandler? ViewStateChanged;
 
     /// <summary>
     ///   Raised when the mpv playlist changes (add/remove/move/jump or
@@ -361,6 +387,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // doesn't overwrite the persisted value before we restore it.
             _volumeRestored = false;
             _muteRestored = false;
+            _fullscreenRestored = false;
 
             // Pre-fetch first file's user data for resume
             var userData = await _apiClient.FetchFileUserDataAsync(firstFile.ID);
@@ -416,14 +443,16 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 return;
             }
 
-            // Apply the saved volume/mute now that mpv is connected (these are
-            // global properties valid while idle), BEFORE registering the
-            // observations, so the immediate observe events report the restored
+            // Apply the saved volume/mute/fullscreen now that mpv is connected
+            // (these are global properties valid while idle), BEFORE registering
+            // the observations, so the immediate observe events report the restored
             // values — no pre-restore default can reach the hub.
             await _mpv.SetPropertyAsync(MpvPropVolume, SettingsProvider.Instance.Settings.Volume);
             await _mpv.SetPropertyAsync(MpvPropMute, SettingsProvider.Instance.Settings.Muted);
+            await _mpv.SetPropertyAsync(MpvPropFullscreen, SettingsProvider.Instance.Settings.IsFullscreen);
             _volumeRestored = true;
             _muteRestored = true;
+            _fullscreenRestored = true;
 
             // Register property observers BEFORE loading the file
             // so we don't miss the initial "path" change event
@@ -437,6 +466,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             await _mpv.ObservePropertyAsync(8, MpvPropVolume);
             await _mpv.ObservePropertyAsync(9, MpvPropMute);
             await _mpv.ObservePropertyAsync(10, MpvPropPlaylist);
+            await _mpv.ObservePropertyAsync(11, MpvPropSpeed);
+            await _mpv.ObservePropertyAsync(12, MpvPropFullscreen);
 
             // Set up mpv keybindings
             var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
@@ -723,6 +754,51 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         if (osdMessages.Count > 0)
             await ShowOsdTextAsync(string.Join("\n", osdMessages));
+    }
+
+    /// <inheritdoc/>
+    public async Task SetPlaybackRateAsync(double rate)
+    {
+        if (!_mpv.IsConnected)
+        {
+            Logger.Debug("SetPlaybackRate ignored — mpv not connected");
+            return;
+        }
+
+        try
+        {
+            await _mpv.SetPropertyAsync(MpvPropSpeed, rate);
+            await ShowOsdTextAsync($"Speed: {rate:0.##}x");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to set mpv playback speed");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task SetFullscreenAsync(bool isFullscreen)
+    {
+        if (!_mpv.IsConnected)
+        {
+            // mpv not running — settings are the source of truth; persist for
+            // the next play instead of throwing "Not connected to mpv".
+            Logger.Debug("SetFullscreen while mpv not connected — persisting setting");
+            SettingsProvider.Instance.Settings.IsFullscreen = isFullscreen;
+            SettingsProvider.Instance.Save();
+            ViewStateChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        try
+        {
+            await _mpv.SetPropertyAsync(MpvPropFullscreen, isFullscreen);
+            await ShowOsdTextAsync(isFullscreen ? "Fullscreen: on" : "Fullscreen: off");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to set mpv fullscreen state");
+        }
     }
 
     /// <inheritdoc/>
@@ -1188,6 +1264,50 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                         args.Data?.GetType().Name, args.Data);
                 }
                 break;
+
+            case MpvPropSpeed:
+                if (args.Data is double speed)
+                {
+                    _currentPlaybackSpeed = speed;
+                    ViewStateChanged?.Invoke(this, EventArgs.Empty);
+                }
+                else if (args.Data is long sl)
+                {
+                    _currentPlaybackSpeed = sl;
+                    ViewStateChanged?.Invoke(this, EventArgs.Empty);
+                }
+                else if (args.Data is int si)
+                {
+                    _currentPlaybackSpeed = si;
+                    ViewStateChanged?.Invoke(this, EventArgs.Empty);
+                }
+                else
+                {
+                    Logger.Debug("Speed property-change with unexpected type: {Type} value={Value}",
+                        args.Data?.GetType().Name, args.Data);
+                }
+                break;
+
+            case MpvPropFullscreen:
+                // Same guard as mute: ignore the initial fullscreen property-change
+                // that fires at startup before the saved state is restored.
+                if (!_fullscreenRestored)
+                {
+                    Logger.Trace("Fullscreen property-change ignored — fullscreen not yet restored");
+                    break;
+                }
+                if (args.Data is bool fullscreen)
+                {
+                    _currentFullscreen = fullscreen;
+                    ViewStateChanged?.Invoke(this, EventArgs.Empty);
+                    PersistFullscreen(fullscreen);
+                }
+                else
+                {
+                    Logger.Debug("Fullscreen property-change with unexpected type: {Type} value={Value}",
+                        args.Data?.GetType().Name, args.Data);
+                }
+                break;
         }
     }
 
@@ -1469,10 +1589,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 Logger.Info("File loaded in mpv");
                 await Task.Delay(FileLoadedDelayMs);
 
-                // Only apply fullscreen on the first file of a playlist. Once the user
-                // has manually toggled it off, subsequent files should not grab the screen.
-                var isFirstFile = _sessionVideoId.HasValue;
-
                 // First file: _sessionFileId is set. Subsequent files: the session is
                 // already active and CurrentFileId was set by HandlePathChanged.
                 var fileId = _sessionVideoId ?? _sessionManager.CurrentVideoId;
@@ -1543,11 +1659,6 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
                 // Initial track selection / restore is done — subsequent changes are user-driven
                 _streamInitPhase = false;
-
-                // Configure display — only on first file so the user can toggle fullscreen
-                // off for subsequent items without the companion grabbing it back.
-                if (SettingsProvider.Instance.Settings.MpvFullScreen && isFirstFile)
-                    await _mpv.SetPropertyAsync("fullscreen", true);
 
                 // Set the mpv window title from the m3u8 EXTINF display title
                 // so it shows the exact Shoko episode name, not whatever the
@@ -1665,10 +1776,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         // truth) and notify listeners so they re-read the effective state.
         _currentVolume = null;
         _currentMuted = null;
+        _currentPlaybackSpeed = null;
+        _currentFullscreen = null;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
         PlaylistChanged?.Invoke(this, EventArgs.Empty);
         VolumeStateChanged?.Invoke(this, EventArgs.Empty);
+        ViewStateChanged?.Invoke(this, EventArgs.Empty);
         if (_state is PlaybackState.Playing or PlaybackState.Paused or PlaybackState.Loading)
         {
             await StopAsync();
@@ -1704,6 +1818,21 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         Logger.Debug("Mute changed to {Muted}", muted);
         SettingsProvider.Instance.Settings.Muted = muted;
+        SettingsProvider.Instance.Save();
+    }
+
+    private void PersistFullscreen(bool isFullscreen)
+    {
+        // Same guard as PersistMute: ignore fullscreen property-changes that
+        // fire during mpv startup before we've restored the saved state.
+        if (!_fullscreenRestored)
+        {
+            Logger.Trace("Fullscreen change ignored — fullscreen not yet restored");
+            return;
+        }
+
+        Logger.Debug("Fullscreen changed to {Fullscreen}", isFullscreen);
+        SettingsProvider.Instance.Settings.IsFullscreen = isFullscreen;
         SettingsProvider.Instance.Save();
     }
 
@@ -1798,9 +1927,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         // Live state is gone — effective volume/mute fall back to settings.
         _currentVolume = null;
         _currentMuted = null;
+        _currentPlaybackSpeed = null;
+        _currentFullscreen = null;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
         VolumeStateChanged?.Invoke(this, EventArgs.Empty);
+        ViewStateChanged?.Invoke(this, EventArgs.Empty);
 
         _discord.Shutdown();
 

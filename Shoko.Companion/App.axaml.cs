@@ -74,6 +74,7 @@ public partial class App : Application
         _coordinator.StateChanged += OnCoordinatorStateChanged;
         _coordinator.PositionTick += OnCoordinatorPositionTick;
         _coordinator.VolumeStateChanged += OnCoordinatorVolumeStateChanged;
+        _coordinator.ViewStateChanged += OnCoordinatorViewStateChanged;
         _coordinator.PlaylistChanged += OnCoordinatorPlaylistChanged;
 
         // Auto-connect Media Session if configured and enabled
@@ -514,6 +515,8 @@ public partial class App : Application
             IsPaused = args.NewState == PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
+            PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+            IsFullscreen = _coordinator.CurrentFullscreen,
         });
     }
 
@@ -547,6 +550,8 @@ public partial class App : Application
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
+            PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+            IsFullscreen = _coordinator.CurrentFullscreen,
         });
     }
 
@@ -580,6 +585,43 @@ public partial class App : Application
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
+            PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+            IsFullscreen = _coordinator.CurrentFullscreen,
+        });
+    }
+
+    private void OnCoordinatorViewStateChanged(object? sender, EventArgs args)
+    {
+        if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
+            return;
+
+        var state = _coordinator.CurrentState switch
+        {
+            PlaybackState.Playing => "Playing",
+            PlaybackState.Paused => "Paused",
+            PlaybackState.Idle => "Idle",
+            PlaybackState.Stopped => "Stopped",
+            PlaybackState.Loading => "Loading",
+            PlaybackState.Error => "Error",
+            _ => "Idle",
+        };
+
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
+
+        _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
+        {
+            State = state,
+            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
+            Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
+            NextItem = hideInfo ? null : _coordinator.NextItem,
+            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
+            IsPaused = state is "Paused",
+            Volume = _coordinator.CurrentVolume,
+            IsMuted = _coordinator.CurrentMuted,
+            PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+            IsFullscreen = _coordinator.CurrentFullscreen,
         });
     }
 
@@ -637,6 +679,8 @@ public partial class App : Application
             IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
+            PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+            IsFullscreen = _coordinator.CurrentFullscreen,
         };
     }
 
