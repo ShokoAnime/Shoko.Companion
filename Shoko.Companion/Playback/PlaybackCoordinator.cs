@@ -395,109 +395,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             if (startPosition.HasValue && _streamMetadata.TryGetValue(firstFile.ID, out var metadata))
                 _streamMetadata[firstFile.ID] = metadata with { StartPosition = startPosition };
 
-            // Find or use configured mpv path
-            var mpvPath = SettingsProvider.Instance.Settings.MpvPath;
-            if (string.IsNullOrWhiteSpace(mpvPath))
-            {
-                mpvPath = await MpvProcess.FindMpvAsync();
-                if (mpvPath is null)
-                {
-                    mpvPath = await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        var dialog = new MpvNotFoundDialog();
-                        if (TryGetParentWindow() is { } parent)
-                        {
-                            await dialog.ShowDialog(parent);
-                        }
-                        else
-                        {
-                            var tcs = new TaskCompletionSource<string?>();
-                            dialog.Closed += (_, _) => tcs.TrySetResult(dialog.MpvPath);
-                            dialog.Show();
-                            return await tcs.Task;
-                        }
-                        return dialog.MpvPath;
-                    });
-
-                    if (string.IsNullOrWhiteSpace(mpvPath))
-                    {
-                        Logger.Info("User cancelled mpv setup — aborting playback");
-                        SetState(PlaybackState.Error, "mpv not found");
-                        return;
-                    }
-                }
-                SettingsProvider.Instance.Settings.MpvPath = mpvPath;
-                SettingsProvider.Instance.Save();
-                Logger.Info("Discovered and saved mpv path: {Path}", mpvPath);
-            }
-
-            // Launch mpv and connect (starts hidden with --vo=null --pause)
-            var ipcPath = MpvProcess.GetDefaultIpcPath();
-            var connected = await _mpv.LaunchAndConnectAsync(mpvPath, ipcPath);
-            if (!connected)
+            if (!await EnsureMpvConnectedAsync())
             {
                 _notifications.Show("mpv Launch Failed",
                     "Could not launch mpv or connect to its IPC socket.",
                     NotificationSeverity.Error);
                 SetState(PlaybackState.Error, "mpv launch failed");
                 return;
-            }
-
-            // Apply the saved volume/mute/fullscreen now that mpv is connected
-            // (these are global properties valid while idle), BEFORE registering
-            // the observations, so the immediate observe events report the restored
-            // values — no pre-restore default can reach the hub.
-            await _mpv.SetPropertyAsync(MpvPropVolume, SettingsProvider.Instance.Settings.Volume);
-            await _mpv.SetPropertyAsync(MpvPropMute, SettingsProvider.Instance.Settings.Muted);
-            await _mpv.SetPropertyAsync(MpvPropFullscreen, SettingsProvider.Instance.Settings.IsFullscreen);
-            _volumeRestored = true;
-            _muteRestored = true;
-            _fullscreenRestored = true;
-
-            // Register property observers BEFORE loading the file
-            // so we don't miss the initial "path" change event
-            await _mpv.ObservePropertyAsync(1, MpvPropTimePos);
-            await _mpv.ObservePropertyAsync(2, MpvPropPause);
-            await _mpv.ObservePropertyAsync(3, MpvPropPath);
-            await _mpv.ObservePropertyAsync(4, MpvPropEofReached);
-            await _mpv.ObservePropertyAsync(5, MpvPropIdleActive);
-            await _mpv.ObservePropertyAsync(6, MpvPropAid);
-            await _mpv.ObservePropertyAsync(7, MpvPropSid);
-            await _mpv.ObservePropertyAsync(8, MpvPropVolume);
-            await _mpv.ObservePropertyAsync(9, MpvPropMute);
-            await _mpv.ObservePropertyAsync(10, MpvPropPlaylist);
-            await _mpv.ObservePropertyAsync(11, MpvPropSpeed);
-            await _mpv.ObservePropertyAsync(12, MpvPropFullscreen);
-
-            // Set up mpv keybindings
-            var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
-            if (!string.IsNullOrWhiteSpace(privacyKey))
-            {
-                try
-                {
-                    await _mpv.SendCommandAsync("keybind",
-                        [privacyKey, $"no-osd script-message shoko-companion-toggle-privacy"]);
-                    Logger.Info("Registered mpv keybinding for privacy toggle: {Key}", privacyKey);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn(ex, "Failed to register mpv keybinding for privacy toggle");
-                }
-            }
-
-            var settingsKey = SettingsProvider.Instance.Settings.SettingsMpvKeybinding;
-            if (!string.IsNullOrWhiteSpace(settingsKey))
-            {
-                try
-                {
-                    await _mpv.SendCommandAsync("keybind",
-                        [settingsKey, "no-osd script-message shoko-companion-open-settings"]);
-                    Logger.Info("Registered mpv keybinding for settings: {Key}", settingsKey);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn(ex, "Failed to register mpv keybinding for settings");
-                }
             }
 
             // Load the m3u8 URL into mpv
@@ -516,6 +420,118 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             _notifications.Show("Playback Error", ex.Message, NotificationSeverity.Error);
             SetState(PlaybackState.Error, ex.Message);
         }
+    }
+
+    /// <summary>
+    ///   Ensure mpv is running and connected: find/configure the binary,
+    ///   launch + connect, restore saved volume/mute/fullscreen, register
+    ///   property observers and keybindings. Returns false when mpv could
+    ///   not be launched or connected. Safe to call when already connected.
+    /// </summary>
+    private async Task<bool> EnsureMpvConnectedAsync()
+    {
+        if (_mpv.IsConnected)
+            return true;
+
+        // Find or use configured mpv path
+        var mpvPath = SettingsProvider.Instance.Settings.MpvPath;
+        if (string.IsNullOrWhiteSpace(mpvPath))
+        {
+            mpvPath = await MpvProcess.FindMpvAsync();
+            if (mpvPath is null)
+            {
+                mpvPath = await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    var dialog = new MpvNotFoundDialog();
+                    if (TryGetParentWindow() is { } parent)
+                    {
+                        await dialog.ShowDialog(parent);
+                    }
+                    else
+                    {
+                        var tcs = new TaskCompletionSource<string?>();
+                        dialog.Closed += (_, _) => tcs.TrySetResult(dialog.MpvPath);
+                        dialog.Show();
+                        return await tcs.Task;
+                    }
+                    return dialog.MpvPath;
+                });
+
+                if (string.IsNullOrWhiteSpace(mpvPath))
+                {
+                    Logger.Info("User cancelled mpv setup — aborting playback");
+                    return false;
+                }
+            }
+            SettingsProvider.Instance.Settings.MpvPath = mpvPath;
+            SettingsProvider.Instance.Save();
+            Logger.Info("Discovered and saved mpv path: {Path}", mpvPath);
+        }
+
+        // Launch mpv and connect (starts hidden with --vo=null --pause)
+        var ipcPath = MpvProcess.GetDefaultIpcPath();
+        var connected = await _mpv.LaunchAndConnectAsync(mpvPath, ipcPath);
+        if (!connected)
+            return false;
+
+        // Apply the saved volume/mute/fullscreen now that mpv is connected
+        // (these are global properties valid while idle), BEFORE registering
+        // the observations, so the immediate observe events report the restored
+        // values — no pre-restore default can reach the hub.
+        await _mpv.SetPropertyAsync(MpvPropVolume, SettingsProvider.Instance.Settings.Volume);
+        await _mpv.SetPropertyAsync(MpvPropMute, SettingsProvider.Instance.Settings.Muted);
+        await _mpv.SetPropertyAsync(MpvPropFullscreen, SettingsProvider.Instance.Settings.IsFullscreen);
+        _volumeRestored = true;
+        _muteRestored = true;
+        _fullscreenRestored = true;
+
+        // Register property observers BEFORE loading the file
+        // so we don't miss the initial "path" change event
+        await _mpv.ObservePropertyAsync(1, MpvPropTimePos);
+        await _mpv.ObservePropertyAsync(2, MpvPropPause);
+        await _mpv.ObservePropertyAsync(3, MpvPropPath);
+        await _mpv.ObservePropertyAsync(4, MpvPropEofReached);
+        await _mpv.ObservePropertyAsync(5, MpvPropIdleActive);
+        await _mpv.ObservePropertyAsync(6, MpvPropAid);
+        await _mpv.ObservePropertyAsync(7, MpvPropSid);
+        await _mpv.ObservePropertyAsync(8, MpvPropVolume);
+        await _mpv.ObservePropertyAsync(9, MpvPropMute);
+        await _mpv.ObservePropertyAsync(10, MpvPropPlaylist);
+        await _mpv.ObservePropertyAsync(11, MpvPropSpeed);
+        await _mpv.ObservePropertyAsync(12, MpvPropFullscreen);
+
+        // Set up mpv keybindings
+        var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
+        if (!string.IsNullOrWhiteSpace(privacyKey))
+        {
+            try
+            {
+                await _mpv.SendCommandAsync("keybind",
+                    [privacyKey, $"no-osd script-message shoko-companion-toggle-privacy"]);
+                Logger.Info("Registered mpv keybinding for privacy toggle: {Key}", privacyKey);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Failed to register mpv keybinding for privacy toggle");
+            }
+        }
+
+        var settingsKey = SettingsProvider.Instance.Settings.SettingsMpvKeybinding;
+        if (!string.IsNullOrWhiteSpace(settingsKey))
+        {
+            try
+            {
+                await _mpv.SendCommandAsync("keybind",
+                    [settingsKey, "no-osd script-message shoko-companion-open-settings"]);
+                Logger.Info("Registered mpv keybinding for settings: {Key}", settingsKey);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, "Failed to register mpv keybinding for settings");
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -840,9 +856,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         if (shokoUrls is null || shokoUrls.Count == 0)
             return;
 
-        if (!_mpv.IsConnected)
+        if (!_mpv.IsConnected && !await EnsureMpvConnectedAsync())
         {
-            Logger.Debug("AddToPlaylist ignored — mpv not connected");
+            Logger.Warn("AddToPlaylist: mpv could not be launched");
             return;
         }
 
