@@ -498,20 +498,19 @@ public partial class App : Application
             PlaybackState.Error => "Error",
             _ => "Idle",
         };
-
-        var sSettings = SettingsProvider.Instance.Settings;
-        var hideInfo = sSettings.EffectivePrivacyMode && sSettings.PrivacyModeHideMediaPlaybackInfo;
+        var settings = SettingsProvider.Instance.Settings;
+        var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            CurrentItem = MaskItem(_coordinator.CurrentItem, hideInfo),
+            NextItem = MaskItem(_coordinator.NextItem, hideInfo),
+            PreviousItem = MaskItem(_coordinator.PreviousItem, hideInfo),
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            NextItem = hideInfo ? null : _coordinator.NextItem,
-            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = args.NewState == PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -535,18 +534,17 @@ public partial class App : Application
             PlaybackState.Error => "Error",
             _ => "Idle",
         };
-
         var settings = SettingsProvider.Instance.Settings;
         var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            CurrentItem = MaskItem(_coordinator.CurrentItem, hideInfo),
+            NextItem = MaskItem(_coordinator.NextItem, hideInfo),
+            PreviousItem = MaskItem(_coordinator.PreviousItem, hideInfo),
             Position = position,
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            NextItem = hideInfo ? null : _coordinator.NextItem,
-            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -570,18 +568,17 @@ public partial class App : Application
             PlaybackState.Error => "Error",
             _ => "Idle",
         };
-
         var settings = SettingsProvider.Instance.Settings;
         var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            CurrentItem = MaskItem(_coordinator.CurrentItem, hideInfo),
+            NextItem = MaskItem(_coordinator.NextItem, hideInfo),
+            PreviousItem = MaskItem(_coordinator.PreviousItem, hideInfo),
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            NextItem = hideInfo ? null : _coordinator.NextItem,
-            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -605,18 +602,17 @@ public partial class App : Application
             PlaybackState.Error => "Error",
             _ => "Idle",
         };
-
         var settings = SettingsProvider.Instance.Settings;
         var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
 
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
             State = state,
-            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            CurrentItem = MaskItem(_coordinator.CurrentItem, hideInfo),
+            NextItem = MaskItem(_coordinator.NextItem, hideInfo),
+            PreviousItem = MaskItem(_coordinator.PreviousItem, hideInfo),
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            NextItem = hideInfo ? null : _coordinator.NextItem,
-            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = state is "Paused",
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
@@ -628,7 +624,9 @@ public partial class App : Application
     /// <summary>
     ///   Raised when the mpv playlist changes. Reports the full playlist to
     ///   the media session hub so the server (and dashboard) stay in sync.
-    ///   Honors privacy mode by sending an empty playlist.
+    ///   Honors privacy mode by masking each item's identity (clearing
+    ///   VideoId and Title) while keeping the StreamUrl so URL-based playlist
+    ///   matching on the server keeps working.
     /// </summary>
     private void OnCoordinatorPlaylistChanged(object? sender, EventArgs args)
     {
@@ -638,7 +636,7 @@ public partial class App : Application
         var settings = SettingsProvider.Instance.Settings;
         var hideInfo = settings.EffectivePrivacyMode && settings.PrivacyModeHideMediaPlaybackInfo;
         IReadOnlyList<MediaItemInfoDto> playlist = hideInfo
-            ? []
+            ? _coordinator.CurrentPlaylist.Select(item => MaskItem(item)!).ToList()
             : _coordinator.CurrentPlaylist;
 
         _ = MediaSessionClient.ReportPlaylistAsync(playlist);
@@ -669,18 +667,41 @@ public partial class App : Application
         return new PlaybackStateUpdateDto
         {
             State = state,
-            CurrentItem = hideInfo ? null : _coordinator.CurrentItem,
+            CurrentItem = MaskItem(_coordinator.CurrentItem, hideInfo),
+            NextItem = MaskItem(_coordinator.NextItem, hideInfo),
+            PreviousItem = MaskItem(_coordinator.PreviousItem, hideInfo),
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue
                 ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value)
                 : null,
-            NextItem = hideInfo ? null : _coordinator.NextItem,
-            PreviousItem = hideInfo ? null : _coordinator.PreviousItem,
             IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+        };
+    }
+
+    /// <summary>
+    /// Return a copy of a media item with identity fields masked for
+    /// privacy mode. The copy keeps its StreamUrl so the server can still
+    /// match playlist items and the current item by URL; only VideoId and
+    /// Title are cleared. Null input returns null.
+    /// </summary>
+    private static MediaItemInfoDto? MaskItem(MediaItemInfoDto? item, bool hide = true)
+    {
+        if (item is null)
+            return null;
+
+        if (!hide)
+            return item;
+
+        return new MediaItemInfoDto
+        {
+            VideoId = null,
+            Title = null,
+            MediaType = item.MediaType,
+            StreamUrl = item.StreamUrl,
         };
     }
 
