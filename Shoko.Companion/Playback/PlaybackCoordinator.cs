@@ -678,7 +678,35 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     /// </summary>
     public async Task ResumeAsync()
     {
-        if (_state != PlaybackState.Paused) return;
+        if (!_mpv.IsConnected) return;
+        if (_state is not (PlaybackState.Paused or PlaybackState.Idle or PlaybackState.Stopped))
+            return;
+
+        // When mpv has nothing loaded (idle-active), plain unpausing is a
+        // no-op. Start playback from the current playlist index instead.
+        // This covers a remote add-to-playlist that launched mpv from idle.
+        bool mpvIdle;
+        try
+        {
+            mpvIdle = await _mpv.GetPropertyAsync<bool?>(MpvPropIdleActive) == true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Resume: failed to query mpv idle state");
+            mpvIdle = false;
+        }
+
+        if (mpvIdle)
+        {
+            if (_mpvPlaylistEntries is { Count: > 0 })
+            {
+                var index = _mpvCurrentPlaylistIndex >= 0 ? _mpvCurrentPlaylistIndex : 0;
+                Logger.Info("Resume: starting playback at playlist index {Index}", index);
+                await _mpv.SendCommandAsync("playlist-play-index", [index]);
+            }
+            return;
+        }
+
         await _mpv.SetPropertyAsync(MpvPropPause, false);
     }
 
@@ -842,6 +870,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         {
             await _mpv.SendCommandAsync("playlist-play-index", [index]);
             Logger.Info("JumpToPlaylistItem: playing playlist index {Index}", index);
+
+            // Start playback immediately. There may be no active session yet
+            // (e.g. jumping in a playlist added while mpv was idle), so don't
+            // rely on the pause observer to report the state change.
+            SetState(PlaybackState.Playing);
+
             await RefreshPlaylistFromMpvAsync();
         }
         catch (Exception ex)
@@ -910,6 +944,18 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             await RefreshPlaylistFromMpvAsync();
             Logger.Info("AddToPlaylist: added {Count} items at index {Index}",
                 m3u8Urls.Count, insertAt);
+
+            // A remote add that launched mpv from idle leaves nothing loaded
+            // with mpv idle+paused. Flip to Paused so the session is playable
+            // (resume/stop/seek enabled) until the user resumes or jumps to
+            // an item. The IdleActive observer only stops on a state change
+            // while Playing/Paused, and mpv's idle-active value does not
+            // change on append, so this does not fight the observer.
+            if ((_state is PlaybackState.Idle or PlaybackState.Stopped)
+                && _mpvPlaylistEntries is { Count: > 0 })
+            {
+                SetState(PlaybackState.Paused);
+            }
         }
         catch (Exception ex)
         {
@@ -1191,8 +1237,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 else
                 {
                     _sessionManager.OnPauseChanged(isPaused);
-                    if (_sessionManager.HasActiveSession)
+                    if (_sessionManager.HasActiveSession
+                        || _state is PlaybackState.Playing or PlaybackState.Paused)
+                    {
                         SetState(isPaused ? PlaybackState.Paused : PlaybackState.Playing);
+                    }
                 }
                 break;
 
