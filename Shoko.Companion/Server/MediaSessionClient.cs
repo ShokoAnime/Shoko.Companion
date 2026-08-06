@@ -552,6 +552,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
             CanProvidePlaylist = s.AllowRemotePlay && !privacyOverrideControl,
             CanReorderPlaylist = s.AllowRemotePlay && !privacyOverrideControl,
             CanJumpToPlaylistItem = s.AllowRemotePlay && !privacyOverrideControl,
+            // Receiving a handoff is starting playback on somebody else's
+            // say-so, so it rides on the remote-play setting and the
+            // privacy override as well as its own switch: turning remote
+            // play off must not leave a back door that starts a video here
+            // anyway. Deliberately not gated on _hasActivePlayback — the
+            // usual reason to hand a video to this device is that it is
+            // sitting idle.
+            CanReceiveHandoff = s.AllowSessionHandoff
+                && s.AllowRemotePlay
+                && !privacyOverrideControl,
         };
     }
 
@@ -683,6 +693,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanJumpToPlaylistItem")]
         public bool CanJumpToPlaylistItem { get; init; } = false;
+
+        [JsonProperty("CanReceiveHandoff")]
+        public bool CanReceiveHandoff { get; init; } = false;
     }
 
     private sealed class SessionInfoDto

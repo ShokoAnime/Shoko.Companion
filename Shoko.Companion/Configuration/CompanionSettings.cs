@@ -194,6 +194,20 @@ public class CompanionSettings
     public bool AllowRemoteVolumeControl { get; set; } = true;
 
     /// <summary>
+    /// Allow another session to move what it is playing to this device,
+    /// at its position and with its track selection. When false,
+    /// <c>CanReceiveHandoff</c> is reported as disabled and the server
+    /// refuses handoffs aimed here.
+    /// <para>
+    /// Defaults to <c>true</c>, unlike the browser player: this is a
+    /// desktop player somebody is sitting at, so a video arriving from
+    /// their phone is the point of the feature rather than a surprise.
+    /// The privacy and remote-play switches still override it.
+    /// </para>
+    /// </summary>
+    public bool AllowSessionHandoff { get; set; } = true;
+
+    /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
     /// </summary>

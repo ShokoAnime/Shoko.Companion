@@ -118,6 +118,10 @@
                           IsCheckedChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="AllowRemoteScreenshotCheck" Content="Allow remote screenshot"
                           IsCheckedChanged="OnAutoSaveSetting"/>
+                <CheckBox Name="AllowSessionHandoffCheck" Content="Allow session handoff to this device"
+                          IsCheckedChanged="OnAutoSaveSetting"/>
+                <TextBlock Text="Another session can move what it is playing here, at its position and tracks."
+                           FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="24,-4,0,0"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="Subtitles on screenshot" VerticalAlignment="Center"/>
                     <ComboBox Name="ScreenshotSubtitleCombo" Width="160" HorizontalAlignment="Left"
