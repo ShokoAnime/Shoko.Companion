@@ -194,17 +194,18 @@ public interface IPlaybackCoordinator
     Task JumpToPlaylistItemAsync(string streamUrl);
 
     /// <summary>
-    ///   Add media (as <c>shoko://</c> play URLs) to the mpv playlist,
-    ///   inserting at <paramref name="atIndex"/> when given, appending
-    ///   otherwise. The new full playlist is reported afterwards.
+    ///   Add media to the mpv playlist, inserting at
+    ///   <paramref name="atIndex"/> when given, appending otherwise. The new
+    ///   full playlist is reported afterwards.
     /// </summary>
-    /// <param name="shokoUrls">
-    ///   The <c>shoko://</c> play URLs to resolve and add.
+    /// <param name="items">
+    ///   The items to resolve and add. Each carries its own start position,
+    ///   applied when the queue reaches it.
     /// </param>
     /// <param name="atIndex">
     ///   Optional zero-based insertion index; <c>null</c> appends.
     /// </param>
-    Task AddToPlaylistAsync(IReadOnlyList<string> shokoUrls, int? atIndex);
+    Task AddToPlaylistAsync(IReadOnlyList<PlaylistAddition> items, int? atIndex);
 
     /// <summary>
     ///   Remove items whose stream URL matches an entry in

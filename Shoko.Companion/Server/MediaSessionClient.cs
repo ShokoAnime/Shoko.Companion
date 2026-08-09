@@ -10,6 +10,7 @@ using Newtonsoft.Json;
 using NLog;
 using Shoko.Companion.Configuration;
 using Shoko.Companion.Playback;
+using Shoko.Companion.Server.Models;
 
 namespace Shoko.Companion.Server;
 
@@ -229,22 +230,25 @@ public sealed class MediaSessionClient : IAsyncDisposable
             }
         });
 
-        _connection.On<IReadOnlyList<int>, int?>("AddToPlaylist", async (videoIds, atIndex) =>
+        _connection.On<IReadOnlyList<PlaylistItemRequestDto>, int?>("AddToPlaylist", async (items, atIndex) =>
         {
             Logger.Info("MediaSession: AddToPlaylist command received ({Count} items at index {Index})",
-                videoIds?.Count ?? 0, atIndex);
+                items?.Count ?? 0, atIndex);
             try
             {
-                if (videoIds is { Count: > 0 })
+                if (items is { Count: > 0 })
                 {
-                    // Resolve each video ID to a shoko:// URL the same way
-                    // the Play command does; the coordinator handles the
-                    // rest of the resolution pipeline.
+                    // Each queued item is a play request in its own right, so
+                    // resolve it to a shoko:// URL the same way the Play
+                    // command does and carry its start position along; the
+                    // coordinator handles the rest of the pipeline.
                     var uri = new Uri(_baseUrl);
-                    var shokoUrls = videoIds
-                        .Select(id => $"shoko://{uri.Authority}/play?playlist=f{id}")
+                    var additions = items
+                        .Select(item => new PlaylistAddition(
+                            $"shoko://{uri.Authority}/play?playlist=f{item.VideoId}",
+                            item.StartPosition))
                         .ToList();
-                    await _coordinator.AddToPlaylistAsync(shokoUrls, atIndex);
+                    await _coordinator.AddToPlaylistAsync(additions, atIndex);
                 }
             }
             catch (Exception ex)

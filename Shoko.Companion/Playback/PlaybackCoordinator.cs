@@ -275,7 +275,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     return;
 
                 case OnNewUrlBehavior.Append:
-                    await AppendToPlaylistAsync(shokoUrl);
+                    await AppendToPlaylistAsync(shokoUrl, startPosition);
                     return;
 
                 case OnNewUrlBehavior.Replace:
@@ -535,9 +535,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     }
 
     /// <summary>
-    /// Append a shoko:// URL to the current mpv playlist without interrupting playback.
+    /// Append a shoko:// URL to the current mpv playlist without interrupting
+    /// playback, carrying <paramref name="startPosition"/> to the appended
+    /// item so a requested position survives the append route.
     /// </summary>
-    private async Task AppendToPlaylistAsync(string shokoUrl)
+    private async Task AppendToPlaylistAsync(string shokoUrl, TimeSpan? startPosition = null)
     {
         var previousState = _state;
         SetState(PlaybackState.Loading);
@@ -616,6 +618,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 _streamMetadata[kvp.Key] = kvp.Value;
 
             EnrichStreamMetadataFromPlaylist(newItems, _streamMetadata);
+
+            ApplyStartPosition(newItems, startPosition);
 
             // Append to mpv playlist. loadlist parses the m3u8 eagerly so each
             // entry shows up in the playlist immediately (needed for the
@@ -885,9 +889,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     }
 
     /// <inheritdoc/>
-    public async Task AddToPlaylistAsync(IReadOnlyList<string> shokoUrls, int? atIndex)
+    public async Task AddToPlaylistAsync(IReadOnlyList<PlaylistAddition> items, int? atIndex)
     {
-        if (shokoUrls is null || shokoUrls.Count == 0)
+        if (items is null || items.Count == 0)
             return;
 
         if (!_mpv.IsConnected && !await EnsureMpvConnectedAsync())
@@ -901,11 +905,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         await RefreshPlaylistFromMpvAsync();
 
         // Resolve every shoko:// URL to a Shoko m3u8 playlist and extend
-        // the in-memory metadata caches along the way.
+        // the in-memory metadata caches along the way. Each item's start
+        // position is stamped onto its file's metadata there, so it is
+        // applied when the queue reaches the item rather than now.
         var m3u8Urls = new List<string>();
-        foreach (var shokoUrl in shokoUrls)
+        foreach (var item in items)
         {
-            var resolved = await ResolveVideoToPlayableAsync(shokoUrl);
+            var resolved = await ResolveVideoToPlayableAsync(item.ShokoUrl, item.StartPosition);
             if (resolved is not null)
                 m3u8Urls.Add(resolved);
         }
@@ -2346,7 +2352,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     ///   added items scrobble correctly when they start playing. Returns
     ///   null when the URL cannot be resolved.
     /// </summary>
-    private async Task<string?> ResolveVideoToPlayableAsync(string shokoUrl)
+    /// <param name="shokoUrl">The <c>shoko://</c> play URL to resolve.</param>
+    /// <param name="startPosition">
+    ///   Optional. Stamped onto the resolved file's metadata so the
+    ///   file-loaded handler seeks there when this item plays.
+    /// </param>
+    private async Task<string?> ResolveVideoToPlayableAsync(
+        string shokoUrl, TimeSpan? startPosition = null)
     {
         var parsed = ShokoUrlParser.Parse(shokoUrl);
         if (parsed is not { IsPlayAction: true })
@@ -2386,7 +2398,26 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             _streamMetadata[kvp.Key] = kvp.Value;
         EnrichStreamMetadataFromPlaylist(items, _streamMetadata);
 
+        ApplyStartPosition(items, startPosition);
+
         return m3u8Url;
+    }
+
+    /// <summary>
+    ///   Record a requested start position against the first file of a
+    ///   freshly resolved item, so <c>file-loaded</c> seeks there when the
+    ///   playlist reaches it. No-op when nothing was requested.
+    /// </summary>
+    private void ApplyStartPosition(List<PlaylistItemDto> items, TimeSpan? startPosition)
+    {
+        if (startPosition is null)
+            return;
+
+        if (items.FirstOrDefault()?.Parts?.FirstOrDefault() is not { } firstFile)
+            return;
+
+        if (_streamMetadata.TryGetValue(firstFile.ID, out var metadata))
+            _streamMetadata[firstFile.ID] = metadata with { StartPosition = startPosition };
     }
 
     /// <summary>
