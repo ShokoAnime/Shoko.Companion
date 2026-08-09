@@ -389,11 +389,13 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             _muteRestored = false;
             _fullscreenRestored = false;
 
-            // Pre-fetch first file's user data for resume
-            var userData = await _apiClient.FetchFileUserDataAsync(firstFile.ID);
             _sessionVideoId = firstFile.ID;
-            if (startPosition.HasValue && _streamMetadata.TryGetValue(firstFile.ID, out var metadata))
-                _streamMetadata[firstFile.ID] = metadata with { StartPosition = startPosition };
+
+            // Record the requested start position, if any. Nothing else is
+            // read from user data here: file-loaded fetches it anyway, and
+            // a Media Session play arrives with the position already
+            // resolved server-side.
+            ApplyStartPosition(_playlistItems, startPosition);
 
             if (!await EnsureMpvConnectedAsync())
             {
@@ -1675,15 +1677,27 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 {
                     var ud = await _apiClient.FetchFileUserDataAsync(fileId.Value);
 
-                    // Seek to position: explicit start position (e.g. Media Session)
-                    // takes precedence over the server-side resume position.
+                    // Seek to position. A start position stated for this file
+                    // (a Media Session play, or a queued item) settles the
+                    // question on its own — including zero, which means "from
+                    // the beginning" and must not fall through to stored
+                    // progress and undo an explicit restart. Only a file
+                    // nobody said anything about resumes from user data, which
+                    // is the shoko:// URL path and every file after the first.
                     double resumeMs = 0;
                     if (_streamMetadata.TryGetValue(fileId.Value, out var fileMeta)
-                        && fileMeta.StartPosition is { TotalSeconds: > MinResumeSeconds })
+                        && fileMeta.StartPosition is { } requested)
                     {
-                        resumeMs = fileMeta.StartPosition.Value.TotalMilliseconds;
-                        Logger.Info("Seeking to start position: {Pos}", fileMeta.StartPosition.Value);
-                        await _mpv.SetPropertyAsync(MpvPropTimePos, fileMeta.StartPosition.Value.TotalSeconds);
+                        if (requested.TotalSeconds > MinResumeSeconds)
+                        {
+                            resumeMs = requested.TotalMilliseconds;
+                            Logger.Info("Seeking to start position: {Pos}", requested);
+                            await _mpv.SetPropertyAsync(MpvPropTimePos, requested.TotalSeconds);
+                        }
+                        else
+                        {
+                            Logger.Info("Start position {Pos} requested — starting from the beginning", requested);
+                        }
                     }
                     else
                     {
