@@ -11,7 +11,15 @@ public class MediaStreamDto
     public int ID { get; set; }
 
     /// <summary>
-    /// The relative order of this stream within its own stream type.
+    /// MediaInfo's <c>StreamOrder</c>: the stream's position among <em>all</em>
+    /// streams in the container, not within its own type — and reported as 0
+    /// for every track of a kind in some files.
+    ///
+    /// It is therefore <em>not</em> the within-type ordinal Shoko persists in
+    /// <see cref="VideoUserDataDto.LastAudioStreamIndex"/> and friends. That
+    /// ordinal is the stream's position in its own kind's list
+    /// (<see cref="MediaInfoDto.Audio"/>, <see cref="MediaInfoDto.Subtitles"/>),
+    /// zero-based.
     /// </summary>
     public int Order { get; set; }
 

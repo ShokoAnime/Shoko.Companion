@@ -43,19 +43,23 @@ public class ScrobbleRequestEventArgs : EventArgs
     public bool PersistUserData => EventType == ScrobbleEventType.PlaybackEnd;
 
     /// <summary>
-    ///   Selected video stream container ID, or <c>null</c>.
+    ///   Selected video track as a zero-based within-type ordinal, or
+    ///   <c>null</c>. Not a container stream ID — see
+    ///   <see cref="PlaybackSessionManager.SetVideoStream"/>.
     /// </summary>
-    public int? VideoStreamId { get; init; }
+    public int? VideoStreamOrdinal { get; init; }
 
     /// <summary>
-    ///   Selected audio stream container ID, or <c>null</c>.
+    ///   Selected audio track as a zero-based within-type ordinal, or
+    ///   <c>null</c>.
     /// </summary>
-    public int? AudioStreamId { get; init; }
+    public int? AudioStreamOrdinal { get; init; }
 
     /// <summary>
-    ///   Selected subtitle stream container ID, or <c>null</c>.
+    ///   Selected subtitle track as a zero-based within-type ordinal, or
+    ///   <c>null</c> when none is selected.
     /// </summary>
-    public int? SubtitleStreamId { get; init; }
+    public int? SubtitleStreamOrdinal { get; init; }
 }
 
 /// <summary>
@@ -208,22 +212,39 @@ public class PlaybackSessionManager
         _session?.EofReached = true;
     }
 
-    /// <summary>Set the selected video stream container ID (null = none).</summary>
-    public void SetVideoStream(int? streamId)
+    /// <summary>
+    ///   Set the selected video track (null = none).
+    ///
+    ///   The value is the <b>within-type ordinal, zero-based</b>: filter
+    ///   the file's streams to the kind and count from there. That is the
+    ///   whole of the cross-client interop for Shoko's single stored
+    ///   integer per kind — a client that persists a container stream ID
+    ///   instead is self-consistent on its own and sends every other
+    ///   client to the wrong track.
+    /// </summary>
+    public void SetVideoStream(int? ordinal)
     {
-        _session?.VideoStreamId = streamId;
+        _session?.VideoStreamOrdinal = ordinal;
     }
 
-    /// <summary>Set the selected audio stream container ID (null = none).</summary>
-    public void SetAudioStream(int? streamId)
+    /// <summary>
+    ///   Set the selected audio track as a zero-based within-type ordinal
+    ///   (null = none). See <see cref="SetVideoStream"/> for the
+    ///   convention.
+    /// </summary>
+    public void SetAudioStream(int? ordinal)
     {
-        _session?.AudioStreamId = streamId;
+        _session?.AudioStreamOrdinal = ordinal;
     }
 
-    /// <summary>Set the selected subtitle stream container ID (null = none/disabled).</summary>
-    public void SetSubtitleStream(int? streamId)
+    /// <summary>
+    ///   Set the selected subtitle track as a zero-based within-type
+    ///   ordinal (null = none/disabled). See
+    ///   <see cref="SetVideoStream"/> for the convention.
+    /// </summary>
+    public void SetSubtitleStream(int? ordinal)
     {
-        _session?.SubtitleStreamId = streamId;
+        _session?.SubtitleStreamOrdinal = ordinal;
     }
 
     /// <summary>
@@ -254,9 +275,9 @@ public class PlaybackSessionManager
         var fileId = _session.VideoId;
         var position = _session.PositionMs;
         var isRestricted = _session.IsRestricted;
-        var videoStreamId = _session.VideoStreamId;
-        var audioStreamId = _session.AudioStreamId;
-        var subtitleStreamId = _session.SubtitleStreamId;
+        var videoStreamOrdinal = _session.VideoStreamOrdinal;
+        var audioStreamOrdinal = _session.AudioStreamOrdinal;
+        var subtitleStreamOrdinal = _session.SubtitleStreamOrdinal;
         var shouldSendStop = ShouldSendEvent(isPauseOrResume: true);
 
         Logger.Info("Session ended at {Pos:F0}ms (dur={Dur:F0}ms, watched={Watched}, eof={Eof}, sendStop={SendStop})",
@@ -273,9 +294,9 @@ public class PlaybackSessionManager
                 EventType = ScrobbleEventType.PlaybackEnd,
                 Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
                 IsWatched = watched,
-                VideoStreamId = videoStreamId,
-                AudioStreamId = audioStreamId,
-                SubtitleStreamId = subtitleStreamId,
+                VideoStreamOrdinal = videoStreamOrdinal,
+                AudioStreamOrdinal = audioStreamOrdinal,
+                SubtitleStreamOrdinal = subtitleStreamOrdinal,
             }));
         }
 
@@ -314,9 +335,9 @@ public class PlaybackSessionManager
         var fileId = _session.VideoId;
         var position = _session.PositionMs;
         var isRestricted = _session.IsRestricted;
-        var videoStreamId = _session.VideoStreamId;
-        var audioStreamId = _session.AudioStreamId;
-        var subtitleStreamId = _session.SubtitleStreamId;
+        var videoStreamOrdinal = _session.VideoStreamOrdinal;
+        var audioStreamOrdinal = _session.AudioStreamOrdinal;
+        var subtitleStreamOrdinal = _session.SubtitleStreamOrdinal;
         var shouldSendStop = ShouldSendEvent(isPauseOrResume: true);
 
         Logger.Info("Finalizing file {File}: pos={Pos:F0}ms, dur={Dur:F0}ms, eof={Eof}, watched={Watched}, sendStop={SendStop}",
@@ -331,9 +352,9 @@ public class PlaybackSessionManager
             EventType = ScrobbleEventType.PlaybackEnd,
             Position = position > 0 ? TimeSpan.FromMilliseconds(position) : null,
             IsWatched = watched,
-            VideoStreamId = videoStreamId,
-            AudioStreamId = audioStreamId,
-            SubtitleStreamId = subtitleStreamId,
+            VideoStreamOrdinal = videoStreamOrdinal,
+            AudioStreamOrdinal = audioStreamOrdinal,
+            SubtitleStreamOrdinal = subtitleStreamOrdinal,
         }));
     }
 
@@ -363,9 +384,9 @@ public class PlaybackSessionManager
         _session.SkipEventCount = SettingsProvider.Instance.Settings.SyncUserDataInitialSkipEventCount;
         _session.IsPaused = true;
         _session.EofReached = false;
-        _session.VideoStreamId = null;
-        _session.AudioStreamId = null;
-        _session.SubtitleStreamId = null;
+        _session.VideoStreamOrdinal = null;
+        _session.AudioStreamOrdinal = null;
+        _session.SubtitleStreamOrdinal = null;
         _session.AnidbAnimeId = animeId;
         _session.TmdbShow = episodeIds?.TmdbShow;
         _session.TmdbMovie = episodeIds?.TmdbMovie;
@@ -566,9 +587,9 @@ public class PlaybackSessionManager
         public bool SentStartEvent;
         public int SkipEventCount;
 
-        public int? VideoStreamId;
-        public int? AudioStreamId;
-        public int? SubtitleStreamId;
+        public int? VideoStreamOrdinal;
+        public int? AudioStreamOrdinal;
+        public int? SubtitleStreamOrdinal;
 
         public int AnidbAnimeId;
         public int? TmdbShow;

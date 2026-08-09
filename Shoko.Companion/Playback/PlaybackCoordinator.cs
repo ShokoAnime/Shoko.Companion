@@ -1523,8 +1523,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
     /// <summary>
     /// Handle an mpv audio (aid) or subtitle (sid) track change. Maps the per-type
-    /// mpv track index to a Shoko container stream ID, stores it for persistence, and
-    /// (for genuine user changes) records the language for cross-file carryover.
+    /// mpv track index to the within-type ordinal Shoko persists, stores it for
+    /// persistence, and (for genuine user changes) records the language for
+    /// cross-file carryover.
     /// </summary>
     private void HandleTrackChanged(StreamKind kind, object? data)
     {
@@ -1541,16 +1542,21 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         var streams = kind == StreamKind.Audio ? mi.Audio : mi.Subtitles;
 
+        // mpv's aid/sid is a 1-based index within the kind, and Shoko lists
+        // each kind in container order, so the position in that list is the
+        // zero-based within-type ordinal every other client reads.
         MediaStreamDto? stream = null;
+        int? ordinal = null;
         if (mpvId is { } id && id >= 1 && id <= streams.Count)
+        {
             stream = streams[id - 1];
-
-        var shokoId = stream?.ID;
+            ordinal = id - 1;
+        }
 
         if (kind == StreamKind.Audio)
-            _sessionManager.SetAudioStream(shokoId);
+            _sessionManager.SetAudioStream(ordinal);
         else
-            _sessionManager.SetSubtitleStream(shokoId);
+            _sessionManager.SetSubtitleStream(ordinal);
 
         // Only record the language as a carryover preference for deliberate user changes.
         if (!_streamInitPhase)
@@ -1561,8 +1567,8 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             else
                 _carryoverSubLang = lang;
 
-            Logger.Debug("User selected {Kind} track: lang={Lang}, mpvId={MpvId}, shokoId={ShokoId}",
-                kind, lang, mpvId, shokoId);
+            Logger.Debug("User selected {Kind} track: lang={Lang}, mpvId={MpvId}, ordinal={Ordinal}",
+                kind, lang, mpvId, ordinal);
         }
     }
 
@@ -1580,7 +1586,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         {
             Logger.Info("Restoring audio track: mpv aid={Aid} (lang={Lang})", a, mi.Audio[a - 1].LanguageCode);
             await _mpv.SetPropertyAsync(MpvPropAid, a);
-            _sessionManager.SetAudioStream(mi.Audio[a - 1].ID);
+            _sessionManager.SetAudioStream(a - 1);
         }
 
         var sid = ResolveRestoreTrack(StreamKind.Subtitle, mi, ud?.LastSubtitleStreamIndex, _carryoverSubLang);
@@ -1588,16 +1594,16 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         {
             Logger.Info("Restoring subtitle track: mpv sid={Sid} (lang={Lang})", s, mi.Subtitles[s - 1].LanguageCode);
             await _mpv.SetPropertyAsync(MpvPropSid, s);
-            _sessionManager.SetSubtitleStream(mi.Subtitles[s - 1].ID);
+            _sessionManager.SetSubtitleStream(s - 1);
         }
     }
 
     /// <summary>
     /// Determine the mpv per-type track index (1-based) to restore for a stream kind,
-    /// preferring a carried-over language match, then the saved server stream ID.
+    /// preferring a carried-over language match, then the saved within-type ordinal.
     /// Returns null if nothing should be restored.
     /// </summary>
-    private int? ResolveRestoreTrack(StreamKind kind, MediaInfoDto mi, int? savedStreamId, string? carryoverLang)
+    private int? ResolveRestoreTrack(StreamKind kind, MediaInfoDto mi, int? savedOrdinal, string? carryoverLang)
     {
         var streams = kind == StreamKind.Audio ? mi.Audio : mi.Subtitles;
         if (streams.Count == 0) return null;
@@ -1612,14 +1618,16 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             }
         }
 
-        // 2. Saved server stream ID (per-file persistence across restarts)
-        if (savedStreamId is { } id)
+        // 2. Saved within-type ordinal (per-file persistence across restarts).
+        //    Zero-based, so walking the kind's list that many steps is the
+        //    whole lookup — no matching against container stream IDs.
+        if (savedOrdinal is { } ordinal)
         {
-            for (var i = 0; i < streams.Count; i++)
-            {
-                if (streams[i].ID == id)
-                    return i + 1;
-            }
+            if (ordinal >= 0 && ordinal < streams.Count)
+                return ordinal + 1;
+
+            Logger.Debug("Saved {Kind} ordinal {Ordinal} does not exist in this file ({Count} tracks)",
+                kind, ordinal, streams.Count);
         }
 
         return null;
@@ -1922,8 +1930,10 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             Logger.Error(ex, "Scrobble failed for file {File}", e.FileId);
         }
 
-        // On stop, persist stream selections (and position) to user data
-        if (e.PersistUserData && (e.AudioStreamId is not null || e.SubtitleStreamId is not null || e.VideoStreamId is not null))
+        // On stop, persist stream selections (and position) to user data.
+        // The stored values are within-type ordinals, zero-based — the one
+        // reading every Shoko client shares.
+        if (e.PersistUserData && (e.AudioStreamOrdinal is not null || e.SubtitleStreamOrdinal is not null || e.VideoStreamOrdinal is not null))
         {
             try
             {
@@ -1934,12 +1944,12 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     LastWatchedAt = userData?.LastWatchedAt,
                     WatchedCount = userData?.WatchedCount ?? 0,
                     LastUpdatedAt = userData?.LastUpdatedAt ?? DateTime.Now,
-                    LastVideoStreamIndex = e.VideoStreamId,
-                    LastAudioStreamIndex = e.AudioStreamId,
-                    LastSubtitleStreamIndex = e.SubtitleStreamId,
+                    LastVideoStreamIndex = e.VideoStreamOrdinal,
+                    LastAudioStreamIndex = e.AudioStreamOrdinal,
+                    LastSubtitleStreamIndex = e.SubtitleStreamOrdinal,
                 });
-                Logger.Debug("Persisted stream selections for file {File}: a={A}, s={S}, v={V}",
-                    e.FileId, e.AudioStreamId, e.SubtitleStreamId, e.VideoStreamId);
+                Logger.Debug("Persisted stream ordinals for file {File}: a={A}, s={S}, v={V}",
+                    e.FileId, e.AudioStreamOrdinal, e.SubtitleStreamOrdinal, e.VideoStreamOrdinal);
             }
             catch (Exception ex)
             {
