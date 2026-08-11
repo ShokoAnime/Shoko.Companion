@@ -61,6 +61,33 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 
 **Auto-connect**: configured per-server-connection via `MediaSessionAutoConnectId` (Guid). Only one connection can auto-connect. Manual Connect/Disconnect buttons in the settings window.
 
+### Stream URLs and the session id
+
+Two stream URL shapes exist: Shoko's `/api/v3/File/{id}/Stream`, authenticated
+by API key, and the plugin's `/api/plugin/MediaSession/v1/Stream/{videoId}[/...]`, which
+is anonymous and guarded on a `sessionId` query parameter. `StreamUrls`
+(`Playback/StreamUrls.cs`) recognises both and is the only place that knows
+either shape.
+
+**Every media session URL the companion plays carries the companion's own session
+id** — attached when the URL has none, replacing whatever is there when it has
+one — **and when the companion holds no session id, the URL is swapped back
+for the APIv3 endpoint.** The companion must never stream under another
+session's id: the guard exists so a stream belongs to a session, and user-data
+writes are keyed by it, so borrowing one scrobbles under it too. The reasoning
+is written out on `StreamUrls`; `StreamUrlsTests` holds it to it.
+
+`MediaSessionClient` pushes its session id to `IPlaybackCoordinator.MediaSessionId`
+as it registers, reconnects and disconnects. It is null until `RegisterSession`
+returns, which is why the APIv3 fallback exists at all — a playlist can be
+fetched before the hub connects.
+
+mpv fetches the Shoko playlist itself and follows the entry URLs in it, so
+`PrepareM3u8Async` rewrites the playlist and hands mpv a local copy whenever
+any entry is a media session URL. A playlist of plain APIv3 entries is untouched.
+Rewriting only the entry URL is enough: the plugin propagates the `sessionId`
+it was called with into every child URI it emits.
+
 ### Playback Flow
 
 ```

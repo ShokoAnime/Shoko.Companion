@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 using System.IO;
 using System.Threading;
 using System.Web;
@@ -25,7 +24,7 @@ namespace Shoko.Companion.Playback;
 /// Implements the full playback lifecycle: URL resolution, mpv launch, property observation,
 /// periodic scrobbling, and cleanup on stop or disconnect.
 /// </summary>
-public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
+public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 {
     // ── Mpv property names (used in both observation and event dispatch) ────
     private const string MpvPropTimePos = "time-pos";
@@ -80,6 +79,14 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
     private bool _lastPrivacyMode;
     private bool _lastEffectivePrivacyMode;
+
+    /// <inheritdoc/>
+    public Guid? MediaSessionId { get; set; }
+
+    // Rewritten copies of Shoko playlists, written out when the playlist
+    // carried media session URLs whose sessionId had to become ours. Kept until
+    // playback stops, because mpv expands a loadfile'd playlist lazily.
+    private readonly List<string> _rewrittenPlaylists = [];
 
     // Thumbnail slave — persistent headless mpv for seek-to-position screenshots
     private IMpvController? _thumbnailMpv;
@@ -379,7 +386,17 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             _duration = firstFile.Duration.TotalMilliseconds;
 
             var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
-            _streamMetadata = await ParseM3u8Async(m3u8Url);
+            var prepared = await PrepareM3u8Async(m3u8Url, apiKey);
+            if (prepared.PlayableUrl is null)
+            {
+                _notifications.Show("Playback Error",
+                    "The playlist could not be moved onto this device's own session.",
+                    NotificationSeverity.Error);
+                SetState(PlaybackState.Error, "Playlist could not be rewritten");
+                return;
+            }
+
+            _streamMetadata = prepared.Metadata;
             EnrichStreamMetadataFromPlaylist(_playlistItems, _streamMetadata);
             _streamInitPhase = true;
 
@@ -406,8 +423,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                 return;
             }
 
-            // Load the m3u8 URL into mpv
-            await _mpv.LoadFileAsync(m3u8Url);
+            // Load the playlist into mpv — the server URL, or the rewritten
+            // copy when it carried media session entries needing our session id.
+            await _mpv.LoadFileAsync(prepared.PlayableUrl);
 
             // Apply resume position once the file loads (handled in OnMpvEvent file-loaded)
 
@@ -615,8 +633,17 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
             // Parse m3u8 for stream metadata
             var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
-            var newMetadata = await ParseM3u8Async(m3u8Url);
-            foreach (var kvp in newMetadata)
+            var prepared = await PrepareM3u8Async(m3u8Url, apiKey);
+            if (prepared.PlayableUrl is null)
+            {
+                _notifications.Show("Playback Error",
+                    "The playlist could not be moved onto this device's own session.",
+                    NotificationSeverity.Error);
+                SetState(previousState);
+                return;
+            }
+
+            foreach (var kvp in prepared.Metadata)
                 _streamMetadata[kvp.Key] = kvp.Value;
 
             EnrichStreamMetadataFromPlaylist(newItems, _streamMetadata);
@@ -627,7 +654,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             // entry shows up in the playlist immediately (needed for the
             // previous/current/next queue cache); loadfile would lazily expand
             // it into internal entries only when played.
-            await _mpv.AppendListAsync(m3u8Url);
+            await _mpv.AppendListAsync(prepared.PlayableUrl);
 
             Logger.Info("Appended to playlist: {Count} items (pending entries: {Pending})",
                 newItems.Count, PendingPlaylistEntries);
@@ -665,6 +692,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _streamInitPhase = false;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
+        DeleteRewrittenPlaylists();
         PlaylistChanged?.Invoke(this, EventArgs.Empty);
 
         SetState(PlaybackState.Stopped);
@@ -1178,6 +1206,11 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
 
         _thumbnailStreamUrl = streamUrl;
 
+        // This URL came out of mpv's playlist, so on a media session stream it
+        // carries whichever session the server minted it for. The slave is a
+        // second player on the same stream and must not ride on that.
+        streamUrl = StreamUrls.ForPlayback(streamUrl, MediaSessionId, _apiClient.ApiKey);
+
         // Load the stream (paused, no audio, headless)
         await _thumbnailMpv.SetPropertyAsync("vo", "null");
         await _thumbnailMpv.SetPropertyAsync("audio", false);
@@ -1417,9 +1450,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
             if (string.IsNullOrWhiteSpace(streamUrl))
                 continue;
 
-            int? videoId = null;
-            if (VideoIdRegex().Match(streamUrl) is { Success: true } match)
-                videoId = int.Parse(match.Groups[1].Value);
+            var videoId = StreamUrls.TryGetVideoId(streamUrl);
 
             var isCurrent = entry.Value<bool>("current");
             entries.Add(new()
@@ -1444,10 +1475,7 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     {
         if (string.IsNullOrWhiteSpace(path)) return;
 
-        var match = VideoIdRegex().Match(path);
-        if (!match.Success) return;
-
-        var fileId = int.Parse(match.Groups[1].Value);
+        if (StreamUrls.TryGetVideoId(path) is not { } fileId) return;
 
         // Entering a new file — suppress treating default track selections as user changes
         _streamInitPhase = true;
@@ -2026,6 +2054,9 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         _currentFullscreen = null;
         _mpvPlaylistEntries = null;
         _mpvCurrentPlaylistIndex = -1;
+        // StopAsync returns early when already idle or stopped, so the
+        // rewritten playlists can still be on disk here.
+        DeleteRewrittenPlaylists();
         VolumeStateChanged?.Invoke(this, EventArgs.Empty);
         ViewStateChanged?.Invoke(this, EventArgs.Empty);
 
@@ -2183,13 +2214,31 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
     }
 
     /// <summary>
-    /// Download and parse the m3u8 playlist to extract stream-level metadata
-    /// (animeName, epNo, epCount, posterUrl, animeId) from each stream URL's query params.
-    /// These are not available from the JSON playlist endpoint.
+    ///   Download the m3u8 playlist, extract the stream-level metadata
+    ///   (animeName, epNo, epCount, posterUrl, animeId) that only its entry
+    ///   URLs' query params carry, and decide what mpv should actually be
+    ///   handed.
+    ///
+    ///   <para>
+    ///     mpv fetches this playlist itself and follows the entry URLs in it,
+    ///     so a media session entry would be played under whatever <c>sessionId</c>
+    ///     the server minted it with. When any entry is a media session URL, the
+    ///     playlist is therefore rewritten through
+    ///     <see cref="StreamUrls.ForPlayback"/> and mpv is handed the
+    ///     rewritten copy instead of the URL. A playlist of plain APIv3
+    ///     entries — everything Shoko emits today — is untouched and mpv still
+    ///     fetches it itself.
+    ///   </para>
     /// </summary>
-    private async Task<Dictionary<int, StreamMetadata>> ParseM3u8Async(string m3u8Url)
+    /// <param name="m3u8Url">The Shoko playlist URL.</param>
+    /// <param name="apiKey">
+    ///   The API key to stamp on an APIv3 fallback URL that carries none.
+    /// </param>
+    /// <returns>The metadata, and the playlist location to hand mpv.</returns>
+    private async Task<PreparedPlaylist> PrepareM3u8Async(string m3u8Url, string? apiKey)
     {
         var result = new Dictionary<int, StreamMetadata>();
+        string? playableUrl = m3u8Url;
 
         try
         {
@@ -2210,30 +2259,132 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
                     if (lines[j].StartsWith("#")) continue;
                     if (string.IsNullOrWhiteSpace(lines[j])) continue;
 
-                    var match = VideoIdRegex().Match(lines[j]);
-                    if (match.Success)
+                    if (StreamUrls.TryGetVideoId(lines[j]) is { } videoId
+                        && !result.ContainsKey(videoId))
                     {
-                        var videoId = int.Parse(match.Groups[1].Value);
-                        if (!result.ContainsKey(videoId))
+                        result[videoId] = ParseStreamMetadata(lines[j], videoId) with
                         {
-                            result[videoId] = ParseStreamMetadata(lines[j], videoId) with
-                            {
-                                M3u8Title = extinfTitle
-                            };
-                        }
+                            M3u8Title = extinfTitle
+                        };
                     }
                     break;
                 }
             }
 
             Logger.Debug("Parsed m3u8: extracted metadata for {Count} files", result.Count);
+
+            // A rewrite that cannot be written out leaves only the server's
+            // own copy, whose entries name a session that is not ours. Refuse
+            // the playlist rather than play it.
+            if (RewriteMediaSessionEntries(lines, apiKey) is { } rewritten)
+                playableUrl = await WriteRewrittenPlaylistAsync(rewritten);
         }
         catch (Exception ex)
         {
             Logger.Warn(ex, "Failed to parse m3u8 for metadata enrichment");
         }
 
-        return result;
+        return new PreparedPlaylist(playableUrl, result);
+    }
+
+    /// <summary>
+    ///   Put this companion's own session id on every media session entry in a
+    ///   playlist, per <see cref="StreamUrls"/>' policy. Returns <c>null</c>
+    ///   when nothing needed rewriting, which is the case for every playlist
+    ///   of plain APIv3 entries.
+    /// </summary>
+    /// <param name="lines">The playlist's lines, comments included.</param>
+    /// <param name="apiKey">The API key for an APIv3 fallback URL.</param>
+    /// <returns>The rewritten playlist text, or <c>null</c>.</returns>
+    private string? RewriteMediaSessionEntries(string[] lines, string? apiKey)
+    {
+        var rewrittenCount = 0;
+        var output = new string[lines.Length];
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            output[i] = lines[i];
+
+            if (lines[i].StartsWith('#')
+                || StreamUrls.Parse(lines[i]) is not { Kind: StreamUrlKind.MediaSession } info)
+            {
+                continue;
+            }
+
+            var rewritten = StreamUrls.ForPlayback(lines[i], MediaSessionId, apiKey);
+            if (string.Equals(rewritten, lines[i], StringComparison.Ordinal))
+                continue;
+
+            output[i] = rewritten;
+            rewrittenCount++;
+
+            if (MediaSessionId is null)
+            {
+                Logger.Warn(
+                    "media session entry for video {VideoId} ({Resource}) arrived with session {ForeignSessionId} " +
+                    "and this companion holds none of its own; rewrote it rather than borrowing that session",
+                    info.VideoId, info.Resource ?? "stream", info.SessionId);
+            }
+            else
+            {
+                Logger.Debug("media session entry for video {VideoId} now carries our session {SessionId}",
+                    info.VideoId, MediaSessionId);
+            }
+        }
+
+        if (rewrittenCount == 0)
+            return null;
+
+        Logger.Info("Rewrote {Count} media session playlist entries onto this companion's own session",
+            rewrittenCount);
+        return string.Join('\n', output);
+    }
+
+    /// <summary>
+    ///   Write a rewritten playlist next to the companion's own temp files so
+    ///   mpv can be handed a local path instead of the server URL. The file
+    ///   lives until playback stops, because mpv expands a <c>loadfile</c>'d
+    ///   playlist lazily rather than at load time.
+    /// </summary>
+    /// <param name="content">The rewritten playlist text.</param>
+    /// <returns>The path written, or <c>null</c> when it could not be.</returns>
+    private async Task<string?> WriteRewrittenPlaylistAsync(string content)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(),
+                $"shoko-companion-{Guid.NewGuid():N}.m3u8");
+            await File.WriteAllTextAsync(path, content);
+            _rewrittenPlaylists.Add(path);
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to write a rewritten playlist; refusing to play the server's copy, "
+                + "whose entries name a session that is not ours");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Delete every rewritten playlist this session wrote out.
+    /// </summary>
+    private void DeleteRewrittenPlaylists()
+    {
+        foreach (var path in _rewrittenPlaylists)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(ex, "Could not delete rewritten playlist {Path}", path);
+            }
+        }
+
+        _rewrittenPlaylists.Clear();
     }
 
     private static StreamMetadata ParseStreamMetadata(string url, int fileId)
@@ -2407,14 +2558,21 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         CacheMediaInfo(items);
 
         var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
-        var newMetadata = await ParseM3u8Async(m3u8Url);
-        foreach (var kvp in newMetadata)
+        var prepared = await PrepareM3u8Async(m3u8Url, apiKey);
+        if (prepared.PlayableUrl is null)
+        {
+            Logger.Warn("AddToPlaylist: the playlist for {ShokoUrl} could not be moved onto "
+                + "this device's own session", shokoUrl);
+            return null;
+        }
+
+        foreach (var kvp in prepared.Metadata)
             _streamMetadata[kvp.Key] = kvp.Value;
         EnrichStreamMetadataFromPlaylist(items, _streamMetadata);
 
         ApplyStartPosition(items, startPosition);
 
-        return m3u8Url;
+        return prepared.PlayableUrl;
     }
 
     /// <summary>
@@ -2468,8 +2626,20 @@ public partial class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposabl
         return items;
     }
 
-    [GeneratedRegex(@"/File/(\d+)/Stream", RegexOptions.IgnoreCase)]
-    private static partial Regex VideoIdRegex();
+    /// <summary>
+    ///   A fetched Shoko playlist: the stream metadata read out of its entry
+    ///   URLs, and the location mpv should be handed — the server URL when the
+    ///   playlist needed nothing done to it, a local rewritten copy when its
+    ///   media session entries had to be moved onto this companion's session.
+    /// </summary>
+    /// <param name="PlayableUrl">
+    ///   The URL or path to hand mpv, or <c>null</c> when the playlist needed
+    ///   rewriting and could not be — in which case it must not be played,
+    ///   because the only version of it that exists is one whose entries name
+    ///   somebody else's session.
+    /// </param>
+    /// <param name="Metadata">Stream metadata by video (file) ID.</param>
+    private record PreparedPlaylist(string? PlayableUrl, Dictionary<int, StreamMetadata> Metadata);
 
     private record StreamMetadata(
         int FileId,

@@ -371,8 +371,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
             {
                 var result = await _connection.InvokeAsync<SessionInfoDto>(
                     "ReconnectSession", _sessionId.Value, _lastState, _coordinator.CurrentPlaylist);
-                _sessionId = result.SessionId;
-                Logger.Info("MediaSession: Reconnected to session {SessionId}", _sessionId.Value);
+                SetSessionId(result.SessionId);
+                Logger.Info("MediaSession: Reconnected to session {SessionId}", result.SessionId);
 
                 // Push current capabilities — they may have changed while
                 // disconnected (e.g. playback stopped, _hasActivePlayback flipped).
@@ -422,13 +422,27 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
             var result = await _connection.InvokeAsync<SessionInfoDto>(
                 "RegisterSession", deviceInfo, _lastState, _coordinator.CurrentPlaylist);
-            _sessionId = result.SessionId;
-            Logger.Info("MediaSession: Registered as session {SessionId}", _sessionId.Value);
+            SetSessionId(result.SessionId);
+            Logger.Info("MediaSession: Registered as session {SessionId}", result.SessionId);
         }
         catch (Exception ex)
         {
             Logger.Warn(ex, "MediaSession: Failed to register session");
         }
+    }
+
+    /// <summary>
+    ///   Record the session id this companion is registered under, and push it
+    ///   to the coordinator, which stamps it onto the media session stream URLs it
+    ///   plays. Until this has run the coordinator holds <c>null</c> and falls
+    ///   back to APIv3 — registration is asynchronous, and a playlist can be
+    ///   fetched before the hub connects at all.
+    /// </summary>
+    /// <param name="sessionId">The session id, or <c>null</c> when we hold none.</param>
+    private void SetSessionId(Guid? sessionId)
+    {
+        _sessionId = sessionId;
+        _coordinator.MediaSessionId = sessionId;
     }
 
     /// <summary>
@@ -621,7 +635,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
             await _connection.DisposeAsync();
             _connection = null;
-            _sessionId = null;
+            SetSessionId(null);
         }
     }
 
