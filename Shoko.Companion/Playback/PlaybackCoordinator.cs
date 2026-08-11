@@ -32,6 +32,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private const string MpvPropPath = "path";
     private const string MpvPropEofReached = "eof-reached";
     private const string MpvPropIdleActive = "idle-active";
+    private const string MpvPropVid = "vid";
     private const string MpvPropAid = "aid";
     private const string MpvPropSid = "sid";
     private const string MpvPropVolume = "volume";
@@ -180,6 +181,28 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
     /// <inheritdoc/>
     public bool? CurrentFullscreen => _currentFullscreen ?? SettingsProvider.Instance.Settings.IsFullscreen;
+
+    /// <inheritdoc/>
+    public PlaybackTrackSelectionDto? CurrentTracks
+    {
+        get
+        {
+            var (video, audio, subtitle) = _sessionManager.CurrentStreamOrdinals;
+            if (video is null && audio is null && subtitle is null)
+                return null;
+
+            return new PlaybackTrackSelectionDto
+            {
+                VideoOrdinal = video,
+                AudioOrdinal = audio,
+                // No subtitle stream selected is "subtitles off", which is
+                // a state a viewer chose and not a gap in what we know -
+                // mpv says sid=no, and the wire spells that -1 so it
+                // survives storage and a handoff.
+                SubtitleIndex = subtitle ?? -1,
+            };
+        }
+    }
 
     /// <summary>
     /// Raised when the playback state changes.
@@ -519,6 +542,10 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         await _mpv.ObservePropertyAsync(10, MpvPropPlaylist);
         await _mpv.ObservePropertyAsync(11, MpvPropSpeed);
         await _mpv.ObservePropertyAsync(12, MpvPropFullscreen);
+        // Observed for the same reason aid and sid are: the ordinal is
+        // reported to the media session and persisted as
+        // LastVideoStreamIndex, and until now nothing ever filled it in.
+        await _mpv.ObservePropertyAsync(13, MpvPropVid);
 
         // Set up mpv keybindings
         var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
@@ -876,6 +903,67 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to set mpv fullscreen state");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task SetTracksAsync(PlaybackTrackSelectionDto tracks)
+    {
+        if (!_mpv.IsConnected)
+        {
+            Logger.Debug("SetTracks ignored - mpv not connected");
+            return;
+        }
+
+        var fileId = _sessionManager.CurrentVideoId;
+        if (fileId is null || !_mediaInfo.TryGetValue(fileId.Value, out var mi))
+        {
+            Logger.Debug("SetTracks ignored - no media info for the current file");
+            return;
+        }
+
+        var applied = new List<string>();
+
+        // The wire convention lives in MpvTrackValue, which is where it is
+        // tested. Nothing is written for a field that says nothing or for
+        // an ordinal this file has no stream at.
+        async Task ApplyAsync(StreamKind kind, string property, int? value, string label)
+        {
+            var mpvValue = MpvTrackValue.Resolve(
+                value, StreamsOfKind(kind, mi).Count,
+                isSubtitle: kind == StreamKind.Subtitle);
+
+            if (mpvValue is null)
+            {
+                if (value is not null)
+                    Logger.Debug(
+                        "SetTracks: {Kind} ordinal {Ordinal} does not exist in this file",
+                        kind, value);
+                return;
+            }
+
+            await _mpv.SetPropertyAsync(property, mpvValue);
+            applied.Add($"{label}: {mpvValue}");
+        }
+
+        try
+        {
+            await ApplyAsync(StreamKind.Video, MpvPropVid, tracks.VideoOrdinal, "Video");
+            await ApplyAsync(StreamKind.Audio, MpvPropAid, tracks.AudioOrdinal, "Audio");
+            await ApplyAsync(
+                StreamKind.Subtitle, MpvPropSid, tracks.SubtitleIndex, "Subtitles");
+
+            // Nothing is recorded here on purpose. mpv answers the property
+            // change on vid/aid/sid, HandleTrackChanged turns that into an
+            // ordinal, and the state report carries what actually happened -
+            // so a track this file does not have leaves the server's picture
+            // of this session true rather than hopeful.
+            if (applied.Count > 0)
+                await ShowOsdTextAsync(string.Join("\n", applied));
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to set mpv track selection");
         }
     }
 
@@ -1304,6 +1392,10 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 }
                 break;
 
+            case MpvPropVid:
+                HandleTrackChanged(StreamKind.Video, args.Data);
+                break;
+
             case MpvPropAid:
                 HandleTrackChanged(StreamKind.Audio, args.Data);
                 break;
@@ -1539,7 +1631,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         }
     }
 
-    private enum StreamKind { Audio, Subtitle }
+    private enum StreamKind { Video, Audio, Subtitle }
 
     /// <summary>
     /// Cache the media info of each file in the playlist by file ID.
@@ -1576,26 +1668,28 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         if (fileId is null || !_mediaInfo.TryGetValue(fileId.Value, out var mi))
             return;
 
-        var streams = kind == StreamKind.Audio ? mi.Audio : mi.Subtitles;
+        var streams = StreamsOfKind(kind, mi);
 
-        // mpv's aid/sid is a 1-based index within the kind, and Shoko lists
+        // mpv's vid/aid/sid is a 1-based index within the kind, and Shoko lists
         // each kind in container order, so the position in that list is the
         // zero-based within-type ordinal every other client reads.
-        MediaStreamDto? stream = null;
-        int? ordinal = null;
-        if (mpvId is { } id && id >= 1 && id <= streams.Count)
+        var ordinal = MpvTrackValue.ToOrdinal(mpvId, streams.Count);
+        var stream = ordinal is { } o ? streams[o] : null;
+
+        switch (kind)
         {
-            stream = streams[id - 1];
-            ordinal = id - 1;
+            case StreamKind.Video: _sessionManager.SetVideoStream(ordinal); break;
+            case StreamKind.Audio: _sessionManager.SetAudioStream(ordinal); break;
+            default: _sessionManager.SetSubtitleStream(ordinal); break;
         }
 
-        if (kind == StreamKind.Audio)
-            _sessionManager.SetAudioStream(ordinal);
-        else
-            _sessionManager.SetSubtitleStream(ordinal);
+        ViewStateChanged?.Invoke(this, EventArgs.Empty);
 
-        // Only record the language as a carryover preference for deliberate user changes.
-        if (!_streamInitPhase)
+        // Only record the language as a carryover preference for deliberate
+        // user changes. Video is left out: a video track's language is not
+        // what anyone is choosing between, and carrying one across files
+        // would be a preference nobody expressed.
+        if (!_streamInitPhase && kind is not StreamKind.Video)
         {
             var lang = stream?.LanguageCode;
             if (kind == StreamKind.Audio)
@@ -1607,6 +1701,19 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 kind, lang, mpvId, ordinal);
         }
     }
+
+    /// <summary>
+    ///   The file's streams of one kind, in container order. Their position
+    ///   in this list is the zero-based within-type ordinal every other
+    ///   client reads, and mpv's 1-based per-kind id is that plus one.
+    /// </summary>
+    private static List<MediaStreamDto> StreamsOfKind(StreamKind kind, MediaInfoDto mi)
+        => kind switch
+        {
+            StreamKind.Video => mi.Video,
+            StreamKind.Audio => mi.Audio,
+            _ => mi.Subtitles,
+        };
 
     /// <summary>
     /// Restore audio and subtitle selections for the given file using the saved user
@@ -1641,7 +1748,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// </summary>
     private int? ResolveRestoreTrack(StreamKind kind, MediaInfoDto mi, int? savedOrdinal, string? carryoverLang)
     {
-        var streams = kind == StreamKind.Audio ? mi.Audio : mi.Subtitles;
+        var streams = StreamsOfKind(kind, mi);
         if (streams.Count == 0) return null;
 
         // 1. Language carryover from a previous file in this session

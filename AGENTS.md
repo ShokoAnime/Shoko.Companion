@@ -56,8 +56,32 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 1. **Probe**: `GET /api/plugin/MediaSession/v1/Available` to check plugin availability
 2. **Connect**: `HubConnection` to `/signalr/plugin/MediaSession/v1` with `accessTokenFactory` sending the API key as Bearer token
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName })`
-4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop` → relayed to `PlaybackCoordinator`
-5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds })` on coordinator state changes
+4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
+5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
+
+### Track selection goes both ways, and they are not the same way
+
+`SetTracks` is a **command**: the plugin tells this session to switch, and
+records nothing from it. `PlaybackStateUpdateDto.Tracks` is a **report**:
+what mpv actually ended up playing, and the only thing the plugin stores
+or hands to another session in a handoff. So a switch is applied to mpv,
+mpv answers on `vid`/`aid`/`sid`, and *that* is what gets reported — a
+track this file does not have leaves the plugin's picture of the session
+true rather than hopeful.
+
+Everything travels as **zero-based within-type ordinals**, never mpv's
+1-based per-kind ids and never container stream IDs. `MpvTrackValue`
+(`Playback/MpvTrackValue.cs`) is the only place the two numberings meet,
+and it also owns the three sentinels: `-2` clears back to the file's
+default (mpv `auto`), `-1` on the subtitle index means off (mpv `no`),
+`null` says nothing and leaves that kind alone. `MpvTrackValueTests`
+holds it to all of it — every failure there would be silent, because mpv
+would take the wrong track and report it back as though a viewer had
+chosen it.
+
+The companion advertises `CanSelectTracks` whenever remote play is
+allowed and something is loaded: mpv switches a track in place for a
+decoder reset, which is the cheap end of what the capability is for.
 
 **Auto-connect**: configured per-server-connection via `MediaSessionAutoConnectId` (Guid). Only one connection can auto-connect. Manual Connect/Disconnect buttons in the settings window.
 

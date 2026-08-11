@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Shoko.Companion.Server;
+using Shoko.Companion.Server.Models;
 
 namespace Shoko.Companion.Playback;
 
@@ -90,6 +91,17 @@ public interface IPlaybackCoordinator
     bool? CurrentFullscreen { get; }
 
     /// <summary>
+    ///   Gets the video, audio and subtitle ordinals currently playing, or
+    ///   <c>null</c> when nothing is loaded.
+    ///
+    ///   Ordinals, not mpv's 1-based per-kind ids: the number Shoko stores
+    ///   and the number another client can act on. A subtitle index of
+    ///   <c>-1</c> means subtitles are off, which is a state a viewer chose
+    ///   and not an absence of information.
+    /// </summary>
+    PlaybackTrackSelectionDto? CurrentTracks { get; }
+
+    /// <summary>
     /// Raised when the playback state changes.
     /// </summary>
     event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
@@ -106,8 +118,14 @@ public interface IPlaybackCoordinator
     event EventHandler? VolumeStateChanged;
 
     /// <summary>
-    ///   Raised when the current playback speed or fullscreen state changes,
-    ///   so listeners can re-report state to the media session hub.
+    ///   Raised when the current playback speed, fullscreen state or track
+    ///   selection changes, so listeners can re-report state to the media
+    ///   session hub.
+    ///
+    ///   Tracks ride here rather than on an event of their own because the
+    ///   listener does the same thing for all three: send one full state
+    ///   report. A fourth near-identical builder would be a fourth place
+    ///   for a field to go missing.
     /// </summary>
     event EventHandler? ViewStateChanged;
 
@@ -193,6 +211,21 @@ public interface IPlaybackCoordinator
     ///   Whether the player window should be fullscreen.
     /// </param>
     Task SetFullscreenAsync(bool isFullscreen);
+
+    /// <summary>
+    ///   Switch the video, audio and/or subtitle track mpv is playing,
+    ///   from ordinals. No-op when mpv is not connected or nothing is
+    ///   loaded.
+    ///
+    ///   Per field: <c>null</c> says nothing and leaves that kind alone,
+    ///   <c>-2</c> clears back to the file's own default, <c>-1</c> on the
+    ///   subtitle index turns subtitles off, and <c>&gt;= 0</c> picks that
+    ///   ordinal. An ordinal this file has no stream for is ignored rather
+    ///   than refused - nobody asked for a failure, they asked for a track
+    ///   the file turned out not to have.
+    /// </summary>
+    /// <param name="tracks">The requested selection.</param>
+    Task SetTracksAsync(PlaybackTrackSelectionDto tracks);
 
     /// <summary>
     ///   Jump directly to the playlist item whose stream URL matches

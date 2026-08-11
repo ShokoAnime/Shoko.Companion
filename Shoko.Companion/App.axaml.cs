@@ -516,6 +516,7 @@ public partial class App : Application
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+            Tracks = _coordinator.CurrentTracks,
         });
     }
 
@@ -550,6 +551,7 @@ public partial class App : Application
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+            Tracks = _coordinator.CurrentTracks,
         });
     }
 
@@ -584,6 +586,7 @@ public partial class App : Application
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+            Tracks = _coordinator.CurrentTracks,
         });
     }
 
@@ -618,6 +621,7 @@ public partial class App : Application
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+            Tracks = _coordinator.CurrentTracks,
         });
     }
 
@@ -679,6 +683,7 @@ public partial class App : Application
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
+            Tracks = _coordinator.CurrentTracks,
         };
     }
 

@@ -217,6 +217,23 @@ public sealed class MediaSessionClient : IAsyncDisposable
             }
         });
 
+        _connection.On<PlaybackTrackSelectionDto>("SetTracks", async tracks =>
+        {
+            Logger.Info(
+                "MediaSession: SetTracks command received "
+                + "(video={Video}, audio={Audio}, subtitle={Subtitle})",
+                tracks?.VideoOrdinal, tracks?.AudioOrdinal, tracks?.SubtitleIndex);
+            try
+            {
+                if (tracks is not null)
+                    await _coordinator.SetTracksAsync(tracks);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "MediaSession: Failed to handle SetTracks command");
+            }
+        });
+
         _connection.On<string>("JumpToPlaylistItem", async streamUrl =>
         {
             Logger.Info("MediaSession: JumpToPlaylistItem command received");
@@ -580,6 +597,15 @@ public sealed class MediaSessionClient : IAsyncDisposable
             CanReceiveHandoff = s.AllowSessionHandoff
                 && s.AllowRemotePlay
                 && !privacyOverrideControl,
+            // mpv switches a track in place - it costs a decoder reset and
+            // nothing else - so this is a plain yes wherever remote control
+            // is allowed at all. It needs something loaded to switch
+            // within, which is what _hasActivePlayback says; a remote
+            // reading false while nothing is playing is reading the truth,
+            // and the flag is re-pushed the moment playback starts.
+            CanSelectTracks = s.AllowRemotePlay
+                && _hasActivePlayback
+                && !privacyOverrideControl,
         };
     }
 
@@ -714,6 +740,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanReceiveHandoff")]
         public bool CanReceiveHandoff { get; init; } = false;
+
+        [JsonProperty("CanSelectTracks")]
+        public bool CanSelectTracks { get; init; } = false;
     }
 
     private sealed class SessionInfoDto
@@ -841,6 +870,18 @@ public sealed class PlaybackStateUpdateDto
     /// </summary>
     [JsonProperty("IsFullscreen")]
     public bool? IsFullscreen { get; init; }
+
+    /// <summary>
+    /// The tracks this session is playing with, or null to say nothing.
+    ///
+    /// The only thing that writes the selection the plugin stores, and so
+    /// the only thing a handoff carries onwards. <c>SetTracks</c> goes the
+    /// other way and records nothing, which is why a switch has to be
+    /// reported here after it lands rather than assumed when it is asked
+    /// for.
+    /// </summary>
+    [JsonProperty("Tracks")]
+    public PlaybackTrackSelectionDto? Tracks { get; init; }
 }
 
 /// <summary>

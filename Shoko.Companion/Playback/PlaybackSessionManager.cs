@@ -97,6 +97,16 @@ public class PlaybackSessionManager
     /// <summary>The file ID of the current session, or null.</summary>
     public int? CurrentVideoId => _session?.VideoId;
 
+    /// <summary>
+    ///   The selected video, audio and subtitle streams of the current
+    ///   session as zero-based within-type ordinals, all null when there is
+    ///   no session. See <see cref="SetVideoStream"/> for the convention.
+    /// </summary>
+    public (int? Video, int? Audio, int? Subtitle) CurrentStreamOrdinals
+        => (_session?.VideoStreamOrdinal,
+            _session?.AudioStreamOrdinal,
+            _session?.SubtitleStreamOrdinal);
+
     /// <summary>The last known playback position in milliseconds.</summary>
     public double CurrentPositionMs => _session?.PositionMs ?? 0;
 
