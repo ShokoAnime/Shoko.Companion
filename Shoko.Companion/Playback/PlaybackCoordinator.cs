@@ -1346,10 +1346,19 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                     long l => l * 1000,
                     _ => 0,
                 };
+                // One-shot: the flag names the *first* position report after a
+                // seek, so consuming it here is what ends the seek. Clearing it
+                // at "playback-restart" instead would fire before that report
+                // arrives and OnSeek would never be reached at all.
                 if (_pendingSeek)
+                {
+                    _pendingSeek = false;
                     _sessionManager.OnSeek(position);
+                }
                 else
+                {
                     _sessionManager.OnPositionChanged(position);
+                }
                 break;
 
             case MpvPropPause:
