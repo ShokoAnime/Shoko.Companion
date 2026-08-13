@@ -277,8 +277,6 @@ public partial class MainWindow : Window
 
         PrivacyModeCheck.IsChecked = s.PrivacyMode;
         PrivacyModeHideDiscordCheck.IsChecked = s.PrivacyModeHideDiscord;
-        PrivacyModeHideMediaPlaybackInfoCheck.IsChecked = s.PrivacyModeHideMediaPlaybackInfo;
-        PrivacyModeDisableRemoteControlCheck.IsChecked = s.PrivacyModeDisableRemoteControl;
         PrivacyModeDisableRemoteScreenshotsCheck.IsChecked = s.PrivacyModeDisableRemoteScreenshots;
         PrivacyModeDisablePlaybackEventsCheck.IsChecked = s.PrivacyModeDisablePlaybackEvents;
         PrivacyModeMpvKeybindingBox.Text = s.PrivacyModeMpvKeybinding ?? string.Empty;
@@ -412,8 +410,6 @@ public partial class MainWindow : Window
         s.MpvStartPaused = MpvStartPausedCheck.IsChecked == true;
         s.PrivacyMode = PrivacyModeCheck.IsChecked == true;
         s.PrivacyModeHideDiscord = PrivacyModeHideDiscordCheck.IsChecked == true;
-        s.PrivacyModeHideMediaPlaybackInfo = PrivacyModeHideMediaPlaybackInfoCheck.IsChecked == true;
-        s.PrivacyModeDisableRemoteControl = PrivacyModeDisableRemoteControlCheck.IsChecked == true;
         s.PrivacyModeDisableRemoteScreenshots = PrivacyModeDisableRemoteScreenshotsCheck.IsChecked == true;
         s.PrivacyModeDisablePlaybackEvents = PrivacyModeDisablePlaybackEventsCheck.IsChecked == true;
         s.PrivacyModeMpvKeybinding = string.IsNullOrWhiteSpace(PrivacyModeMpvKeybindingBox.Text)

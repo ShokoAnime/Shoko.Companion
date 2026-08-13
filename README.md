@@ -112,13 +112,11 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |
 | `DiscordIdlePresence` | bool | `false` | Show "Browsing" → "Idle" presence when nothing is playing. |
-| `PrivacyMode` | bool | `false` | Global privacy mode master switch. When enabled, sub-toggles below restrict what is shared. When disabled, individual feature toggles control behavior independently. |
-| `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence; show generic "Watching Anime" instead. Only effective when `PrivacyMode` is true. |
-| `PrivacyModeHideMediaPlaybackInfo` | bool | `false` | Strip title, stream URL, file ID, and thumbnail from Media Session hub state. Basic state (Playing/Paused) and position/duration still reported. |
-| `PrivacyModeDisableRemoteControl` | bool | `false` | Disallow remote Play/Pause/Resume/Seek/Stop via Media Session API. |
+| `PrivacyMode` | bool | `false` | Global privacy mode master switch. Sent to the Media Session plugin as `PrivacyModeEnabled`, which is what makes the server hide what this device plays from every other viewer and stop recording it. Turning it on mid-session reaches the server and privatises what is already queued. |
+| `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence; show generic "Watching Anime" instead. Only effective when `PrivacyMode` is true. Local only — no server setting expresses rich presence. |
 | `PrivacyModeDisableRemoteScreenshots` | bool | `false` | Disallow remote screenshot capture via Media Session API. |
-| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable all scrobble/sync events to the Shoko server. |
-| `PrivacyModeForRestrictedContent` | bool | `false` | When true, restricted (adult) content automatically activates privacy mode using the configured sub-toggles. |
+| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable all scrobble/sync events to the Shoko server. Also sent as `DisablePlaybackEventSyncing`, so it holds whether or not a Media Session is connected — the two scrobblers take turns, and telling only one leaves the other writing. |
+| `PrivacyModeForRestrictedContent` | bool | `false` | When true, restricted (adult) content automatically activates privacy mode. Also sent as `AlwaysUsePrivacyModeForRestrictedContent`, where the server rules what counts as restricted and applies it to items added after it, never backwards into the queue. |
 | `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. Sent via JSON IPC; no Lua scripts needed. |
 | `MediaSessionEnabled` | bool | `false` | Global enabled switch for Media Session API integration. When disabled, auto-connect won't run and sub-controls are greyed out. |
 | `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Controls subtitle visibility during screenshots: `Disabled` (subs always visible), `OnlyWhenPaused` (hide subs only when paused — avoids visual flicker), `Always` (hide subs on every capture). |

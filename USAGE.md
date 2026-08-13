@@ -183,12 +183,10 @@ Logs are under `logs/` — handy when troubleshooting.
 | `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |
 | `DiscordIdlePresence` | bool | `false` | Show "Browsing" → "Idle" presence when not playing. |
-| `PrivacyMode` | bool | `false` | Global privacy mode master switch. |
+| `PrivacyMode` | bool | `false` | Global privacy mode master switch. Told to the server, which hides what this device plays from everyone else and stops recording it. |
 | `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence (was `DiscordPrivacyMode`). |
-| `PrivacyModeHideMediaPlaybackInfo` | bool | `false` | Strip title/file info from Media Session hub state. |
-| `PrivacyModeDisableRemoteControl` | bool | `false` | Disallow remote Play/Pause/Seek/Stop via Media Session. |
 | `PrivacyModeDisableRemoteScreenshots` | bool | `false` | Disallow remote screenshot capture via Media Session. |
-| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable scrobble/sync to Shoko server. |
+| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable scrobble/sync to Shoko server, by this client and by the server on its behalf. |
 | `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. |
 | `AlwaysUseConfiguredRoutes` | bool | `false` | Skip direct URL check; always use connection route table. |
 | `LogLevel` | string | `"Info"` | One of: Trace, Debug, Info, Warn, Error. |

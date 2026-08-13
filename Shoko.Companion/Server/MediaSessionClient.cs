@@ -35,6 +35,13 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private bool _hasActivePlayback;
 
     /// <summary>
+    ///   The settings declaration the server last accepted, or <c>null</c>
+    ///   when what it holds is unknown. Only ever what a successful send
+    ///   carried, so a dropped push is retried by the next change.
+    /// </summary>
+    private SessionSettingsDto? _lastSentSettings;
+
+    /// <summary>
     ///   Whether a media file is currently loaded and playable.
     ///   Used to gate resume/pause/seek/stop/screenshot capabilities.
     /// </summary>
@@ -90,6 +97,14 @@ public sealed class MediaSessionClient : IAsyncDisposable
         _coordinator = coordinator;
         _lastState = initialState;
         _hasActivePlayback = initialState?.State is "Playing" or "Paused";
+
+        // Every path that changes a setting ends in Save(), which raises
+        // this — the settings window, the tray, the mpv privacy keybinding
+        // and an edit made to settings.json by hand. Subscribing to the one
+        // event rather than teaching each of those callers about the hub is
+        // what makes "and on change" true of all of them rather than the
+        // ones somebody remembered.
+        SettingsProvider.Instance.SettingsChanged += OnSettingsChanged;
     }
 
     /// <summary>
@@ -395,6 +410,14 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 // disconnected (e.g. playback stopped, _hasActivePlayback flipped).
                 await UpdateCapabilitiesOnHubAsync();
 
+                // And the settings, for the same reason and one more: a
+                // viewer who turned privacy on while this client was off
+                // the wire changed the one declaration whose whole point
+                // is that the server acts on it. Forced, because the
+                // reclaimed session's settings are whatever it held before
+                // the drop and this client no longer knows what that was.
+                await UpdateSettingsOnHubAsync(force: true);
+
                 // Restart stopped→idle timer if we reconnected while stopped,
                 // otherwise the hub would see "Stopped" indefinitely.
                 if (_lastState?.State == "Stopped")
@@ -435,11 +458,17 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Platform = GetPlatform(),
                 Version = version,
                 Capabilities = BuildCurrentCapabilities(),
+                Settings = BuildCurrentSettings(),
             };
 
             var result = await _connection.InvokeAsync<SessionInfoDto>(
                 "RegisterSession", deviceInfo, _lastState, _coordinator.CurrentPlaylist);
             SetSessionId(result.SessionId);
+            // Registration carried the settings, so record them as sent.
+            // Doing this only on success is what makes a failed register
+            // followed by a re-register push them again rather than
+            // conclude the server already has them.
+            _lastSentSettings = deviceInfo.Settings;
             Logger.Info("MediaSession: Registered as session {SessionId}", result.SessionId);
         }
         catch (Exception ex)
@@ -460,6 +489,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
     {
         _sessionId = sessionId;
         _coordinator.MediaSessionId = sessionId;
+        // A different session holds different settings, and none at all
+        // holds none. Forgetting here is what stops a fresh registration
+        // from believing a previous session's declaration still stands.
+        _lastSentSettings = null;
     }
 
     /// <summary>
@@ -562,50 +595,133 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private SessionCapabilitiesDto BuildCurrentCapabilities()
     {
         var s = SettingsProvider.Instance.Settings;
-        var privacyOverrideControl = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteControl;
+
+        // Privacy does not appear below any more, and that is a change in
+        // what this client *declares* rather than only in what it hides.
+        // A capability answers "can this build do it", and "can, but the
+        // viewer has privacy on right now" is a state — one the server is
+        // now told directly, on SessionSettings. Once it knows, it refuses
+        // control of a private item itself, at the session manager, across
+        // eleven commands; a second copy of that rule here could only ever
+        // disagree with the first, and the way it disagreed would be to
+        // declare an ability away permanently for a state that passes.
+        //
+        // Every flag that carried the old `!privacyOverrideControl` was
+        // re-read on removing it rather than stripped, and each is noted
+        // below where the answer is not simply "the server guards this".
+        //
+        // Screenshots keep their own gate. That switch was not part of the
+        // ruling that removed the control one, so it stays as it was.
         var privacyOverrideScreenshot = s.EffectivePrivacyMode && s.PrivacyModeDisableRemoteScreenshots;
 
         return new SessionCapabilitiesDto
         {
-            CanPlay = s.AllowRemotePlay && !privacyOverrideControl,
-            CanResumeOrPause = _hasActivePlayback && !privacyOverrideControl,
-            CanSeek = _hasActivePlayback && !privacyOverrideControl,
-            CanStop = _hasActivePlayback && !privacyOverrideControl,
+            // Play was the weakest of the gated flags even on its own
+            // terms: it replaces what is playing rather than acting on it,
+            // so the server deliberately does not refuse it for a private
+            // item either. What arrives is a *new* item, and its privacy
+            // is resolved from the settings this client now sends.
+            CanPlay = s.AllowRemotePlay,
+            // The four transport commands. All are refused server-side
+            // while the current item is private, so the gate here only
+            // ever hid the button a moment earlier.
+            CanResumeOrPause = _hasActivePlayback,
+            CanSeek = _hasActivePlayback,
+            CanStop = _hasActivePlayback,
             CanReportState = _hasActivePlayback,
             CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
             CanScreenshotAtPosition = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
             MaxVolume = PlaybackCoordinator.MaxMpvVolume,
-            CanSetVolume = s.AllowRemoteVolumeControl && !privacyOverrideControl,
-            CanSkipItems = s.AllowRemotePlay && !privacyOverrideControl,
+            // Volume is guarded server-side for a private item too, which
+            // is stricter than it needs to be and is not ours to relax.
+            CanSetVolume = s.AllowRemoteVolumeControl,
+            CanSkipItems = s.AllowRemotePlay,
             // mpv supports both the `speed` and `fullscreen` properties, so
-            // remote control is gated on the same setting/privacy rules.
-            CanChangePlaybackRate = s.AllowRemotePlay && !privacyOverrideControl,
-            CanChangeFullscreen = s.AllowRemotePlay && !privacyOverrideControl,
+            // remote control is gated on the remote-play setting alone.
+            CanChangePlaybackRate = s.AllowRemotePlay,
+            CanChangeFullscreen = s.AllowRemotePlay,
             // mpv supports the full playlist contract (provide/reorder/jump),
-            // gated on the same remote-play setting/privacy rules as the
-            // other remote commands.
-            CanProvidePlaylist = s.AllowRemotePlay && !privacyOverrideControl,
-            CanReorderPlaylist = s.AllowRemotePlay && !privacyOverrideControl,
-            CanJumpToPlaylistItem = s.AllowRemotePlay && !privacyOverrideControl,
+            // gated on the same remote-play setting as the other remote
+            // commands. Providing and reordering are not refused for a
+            // private item server-side, and do not need to be: a private
+            // entry reaches an observer as two opaque fields, so a queue
+            // somebody can rearrange is a queue they still cannot read.
+            // Jumping is refused, being a transport command wearing a
+            // playlist's clothes.
+            CanProvidePlaylist = s.AllowRemotePlay,
+            CanReorderPlaylist = s.AllowRemotePlay,
+            CanJumpToPlaylistItem = s.AllowRemotePlay,
             // Receiving a handoff is starting playback on somebody else's
-            // say-so, so it rides on the remote-play setting and the
-            // privacy override as well as its own switch: turning remote
-            // play off must not leave a back door that starts a video here
-            // anyway. Deliberately not gated on _hasActivePlayback — the
-            // usual reason to hand a video to this device is that it is
-            // sitting idle.
-            CanReceiveHandoff = s.AllowSessionHandoff
-                && s.AllowRemotePlay
-                && !privacyOverrideControl,
+            // say-so, so it rides on the remote-play setting as well as its
+            // own switch: turning remote play off must not leave a back
+            // door that starts a video here anyway. Deliberately not gated
+            // on _hasActivePlayback — the usual reason to hand a video to
+            // this device is that it is sitting idle. And no longer gated
+            // on privacy: privacy crosses a handoff on the *item*, which
+            // arrives already marked private, so a viewer in privacy mode
+            // stays able to pull their own video over from their phone
+            // instead of the feature quietly vanishing when they need it.
+            CanReceiveHandoff = s.AllowSessionHandoff && s.AllowRemotePlay,
             // mpv switches a track in place - it costs a decoder reset and
             // nothing else - so this is a plain yes wherever remote control
             // is allowed at all. It needs something loaded to switch
             // within, which is what _hasActivePlayback says; a remote
             // reading false while nothing is playing is reading the truth,
             // and the flag is re-pushed the moment playback starts.
-            CanSelectTracks = s.AllowRemotePlay
-                && _hasActivePlayback
-                && !privacyOverrideControl,
+            CanSelectTracks = s.AllowRemotePlay && _hasActivePlayback,
+        };
+    }
+
+    /// <summary>
+    ///   Build the settings this session declares — how it is configured,
+    ///   as opposed to what it is able to do.
+    ///
+    ///   <para>
+    ///     Three fields, and each is driven by a switch the companion
+    ///     already had. The server owns what they mean: it resolves
+    ///     privacy per item, ratchets it so it never comes off, withholds
+    ///     a private item from every observer as two fields, and refuses
+    ///     remote control of one. None of that happens until it is told,
+    ///     and until this method existed it never was.
+    ///   </para>
+    ///   <para>
+    ///     <b>The master switch sends <see cref="CompanionSettings.PrivacyMode"/>,
+    ///     not <c>EffectivePrivacyMode</c>.</b> The effective value folds in
+    ///     the restricted-content auto-trigger, and the two fields are not
+    ///     interchangeable on the far side: the server's master switch
+    ///     re-resolves the <em>whole queue</em> on its off→on transition,
+    ///     while its restricted rule deliberately never reaches back into
+    ///     the queue. Sending the effective value would make a restricted
+    ///     episode starting retroactively privatise everything already
+    ///     queued — the exact asymmetry the server rules against. So the
+    ///     two travel on their own fields and the server applies each
+    ///     rule with its own reach.
+    ///   </para>
+    ///   <para>
+    ///     <c>BufferAheadSeconds</c> is not sent. mpv holds its own cache
+    ///     and the companion has no configured forward target to report,
+    ///     and silence there means "no opinion, use the default" rather
+    ///     than zero.
+    ///   </para>
+    /// </summary>
+    internal static SessionSettingsDto BuildCurrentSettings()
+    {
+        var s = SettingsProvider.Instance.Settings;
+
+        return new SessionSettingsDto
+        {
+            PrivacyModeEnabled = s.PrivacyMode,
+            AlwaysUsePrivacyModeForRestrictedContent = s.PrivacyModeForRestrictedContent,
+            // One switch, two writers — and they take turns rather than
+            // overlap, which is what makes sending this necessary rather
+            // than merely tidy. While a media session is registered the
+            // companion stands its own APIv3 scrobbler down entirely and
+            // the server writes instead; without this field the viewer's
+            // "do not record this" would hold only while the hub was
+            // *down*, and silently stop meaning anything the moment it
+            // came up. Which is the more common state, and the one they
+            // are less likely to notice.
+            DisablePlaybackEventSyncing = s.PrivacyModeDisablePlaybackEvents,
         };
     }
 
@@ -631,6 +747,69 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
+    ///   Push the current settings to the hub, so a switch the viewer just
+    ///   flipped reaches the server that enforces it.
+    ///
+    ///   <para>
+    ///     Turning privacy on mid-session is the case this exists for, and
+    ///     it is not merely cosmetic on the far side: the server's master
+    ///     switch re-resolves the whole queue on its off→on transition, so
+    ///     what is already queued is privatised too rather than only what
+    ///     is added next.
+    ///   </para>
+    ///   <para>
+    ///     <b>Unchanged declarations are not sent.</b> Settings are saved
+    ///     far more often than they change in any way this cares about —
+    ///     volume and fullscreen persist through the same file — and each
+    ///     push costs a hub round trip and a state broadcast to every
+    ///     observer. Comparing against what was last accepted is what
+    ///     keeps "on change" meaning on change.
+    ///   </para>
+    /// </summary>
+    /// <param name="force">
+    ///   Send even when the declaration matches the last one accepted.
+    ///   Used after a reconnect, where what the server holds is not known.
+    /// </param>
+    public async Task UpdateSettingsOnHubAsync(bool force = false)
+    {
+        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+            return;
+
+        var settings = BuildCurrentSettings();
+        if (!force && settings == _lastSentSettings)
+            return;
+
+        try
+        {
+            await _connection.InvokeAsync("UpdateSettings", settings);
+            _lastSentSettings = settings;
+            Logger.Debug(
+                "MediaSession: Settings pushed (privacy={Privacy}, "
+                + "restricted={Restricted}, noSync={NoSync})",
+                settings.PrivacyModeEnabled,
+                settings.AlwaysUsePrivacyModeForRestrictedContent,
+                settings.DisablePlaybackEventSyncing);
+        }
+        catch (Exception ex)
+        {
+            // Left unrecorded deliberately, so the next change retries
+            // rather than comparing against a declaration that never
+            // landed. Warn rather than Debug: a privacy switch that did
+            // not reach the server is the failure this whole path exists
+            // to prevent, and it is otherwise silent.
+            _lastSentSettings = null;
+            Logger.Warn(ex, "MediaSession: Failed to update settings");
+        }
+    }
+
+    /// <summary>
+    ///   Settings were saved. Push them if anything this session declares
+    ///   actually moved.
+    /// </summary>
+    private void OnSettingsChanged(CompanionSettings settings)
+        => _ = UpdateSettingsOnHubAsync();
+
+    /// <summary>
     /// Get the current platform string for device registration.
     /// </summary>
     private static string GetPlatform()
@@ -644,6 +823,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
+        SettingsProvider.Instance.SettingsChanged -= OnSettingsChanged;
         CancelStoppedTimer();
 
         if (_connection is not null)
@@ -689,6 +869,34 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("Capabilities")]
         public SessionCapabilitiesDto Capabilities { get; init; } = new();
+
+        [JsonProperty("Settings")]
+        public SessionSettingsDto Settings { get; init; } = new();
+    }
+
+    /// <summary>
+    ///   How this session is configured, mirroring the plugin's
+    ///   <c>SessionSettings</c>. Sent on the registration payload beside
+    ///   the capabilities, and replaced wholesale afterwards through
+    ///   <c>UpdateSettings</c>.
+    ///
+    ///   <para>
+    ///     A record rather than a class, unlike its neighbours, because
+    ///     the only question ever asked of two of these is whether they
+    ///     differ — see <see cref="UpdateSettingsOnHubAsync"/>, which
+    ///     declines to push an unchanged declaration.
+    ///   </para>
+    /// </summary>
+    internal sealed record SessionSettingsDto
+    {
+        [JsonProperty("PrivacyModeEnabled")]
+        public bool PrivacyModeEnabled { get; init; }
+
+        [JsonProperty("AlwaysUsePrivacyModeForRestrictedContent")]
+        public bool AlwaysUsePrivacyModeForRestrictedContent { get; init; }
+
+        [JsonProperty("DisablePlaybackEventSyncing")]
+        public bool DisablePlaybackEventSyncing { get; init; }
     }
 
     private sealed class SessionCapabilitiesDto

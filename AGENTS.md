@@ -55,7 +55,7 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 
 1. **Probe**: `GET /api/plugin/MediaSession/v1/Available` to check plugin availability
 2. **Connect**: `HubConnection` to `/signalr/plugin/MediaSession/v1` with `accessTokenFactory` sending the API key as Bearer token
-3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName })`
+3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
 5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
 
@@ -166,12 +166,46 @@ Global privacy mode with per-feature sub-toggles. Settings in `CompanionSettings
 
 - `PrivacyMode` — master switch. When OFF, sub-toggles have no effect and individual feature toggles control behavior independently.
 - `PrivacyModeHideDiscord` — hide title/poster from Discord (replaces `DiscordPrivacyMode`)
-- `PrivacyModeHideMediaPlaybackInfo` — strip title/file info from Media Session hub state
-- `PrivacyModeDisableRemoteControl` — deny remote Play/Pause/Seek/Stop via Media Session API
 - `PrivacyModeDisableRemoteScreenshots` — deny remote screenshot capture via Media Session API
 - `PrivacyModeDisablePlaybackEvents` — block all scrobbling to Shoko server
 - `PrivacyModeForRestrictedContent` — auto-activate privacy mode for restricted (adult) content
 - `PrivacyModeMpvKeybinding` — mpv key combo to toggle privacy during playback (default `Ctrl+p`, no Lua scripts needed)
+
+### Three of them are declared to the plugin, and that is where privacy happens
+
+`MediaSessionClient.BuildCurrentSettings` maps `PrivacyMode`,
+`PrivacyModeForRestrictedContent` and `PrivacyModeDisablePlaybackEvents`
+onto the plugin's `SessionSettings` — `PrivacyModeEnabled`,
+`AlwaysUsePrivacyModeForRestrictedContent`, `DisablePlaybackEventSyncing`.
+Sent on the registration payload beside `Capabilities`, and re-sent through
+`UpdateSettings` whenever `SettingsProvider.SettingsChanged` fires and the
+declaration actually moved. The server resolves privacy **per item**, and
+it **ratchets** — once on for an item it never comes off — so this is a
+one-way switch on the far side however often the local one is flipped.
+
+**The master switch sends `PrivacyMode`, never `EffectivePrivacyMode`.**
+The effective value folds in the restricted-content trigger, and the two
+do not have the same reach server-side: the master switch re-resolves the
+*whole queue* when it transitions on, while the restricted rule
+deliberately never reaches back. Sending the effective value would make one
+restricted episode retroactively privatise everything queued, permanently.
+`SessionSettingsDeclarationTests` pins this.
+
+**Two settings were removed when this landed** —
+`PrivacyModeHideMediaPlaybackInfo` and `PrivacyModeDisableRemoteControl`.
+Both re-implemented locally what the server does once told, and the server
+does each of them better: it withholds a private item from every observer
+as two opaque fields rather than blanking a title while still sending the
+stream URL, and it refuses remote control of a private item at the session
+manager across eleven commands. `privacyOverrideControl` went with the
+second, so the capability builder no longer gates anything on privacy —
+a capability says what the build can do, and "can, but privacy is on right
+now" is a state.
+
+**The client never lies to the server.** State and playlist are reported
+in full whatever privacy says; filtering happens where the server speaks
+to somebody other than this session. That is what keeps the playlist,
+handoff and track selection working for the session's own viewer.
 - `ScreenshotSubtitleBehavior` — subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` (default) / `Always`
 - `MediaSessionEnabled` — global enabled switch for Media Session API integration
 - `MediaSessionAutoConnectId` — Guid of the connection to auto-connect for Media Session API (null = none)

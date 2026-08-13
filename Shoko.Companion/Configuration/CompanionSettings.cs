@@ -105,8 +105,19 @@ public class CompanionSettings
 
     /// <summary>
     /// Global master switch for privacy mode. When enabled, the sub-toggles
-    /// below determine which features are restricted. When disabled, all
-    /// sub-toggles are ignored and individual feature toggles control behavior.
+    /// below determine which features are restricted locally. When disabled,
+    /// all sub-toggles are ignored and individual feature toggles control
+    /// behavior.
+    /// <para>
+    /// It is also the value sent to the media session plugin as
+    /// <c>PrivacyModeEnabled</c>, which is what makes the server hide the
+    /// items this session plays from other viewers and stop recording them.
+    /// Sent as this raw value rather than as
+    /// <see cref="EffectivePrivacyMode"/>: the server's master switch
+    /// re-resolves the whole queue when it turns on, while its
+    /// restricted-content rule deliberately never reaches back, so the two
+    /// halves of the effective value travel on separate fields.
+    /// </para>
     /// </summary>
     public bool PrivacyMode { get; set; }
 
@@ -117,20 +128,32 @@ public class CompanionSettings
     /// </summary>
     public bool PrivacyModeHideDiscord { get; set; }
 
-    /// <summary>
-    /// When privacy mode is active, strips identifying media information
-    /// (title, stream URL, file ID, thumbnail) from the state reported to
-    /// the Media Session hub. Basic playback state (Playing/Paused/Stopped)
-    /// and position/duration are still reported.
-    /// </summary>
-    public bool PrivacyModeHideMediaPlaybackInfo { get; set; }
-
-    /// <summary>
-    /// When privacy mode is active, disallows remote clients from starting,
-    /// pausing, resuming, seeking, or stopping playback via the Media
-    /// Session API. Overrides <see cref="AllowRemotePlay"/>.
-    /// </summary>
-    public bool PrivacyModeDisableRemoteControl { get; set; }
+    // ── Two settings used to sit here, and the server does both jobs ──
+    //
+    // `PrivacyModeHideMediaPlaybackInfo` stripped the title and file id
+    // from the state reported to the media session hub, and
+    // `PrivacyModeDisableRemoteControl` withheld thirteen capability flags.
+    // Both are gone rather than deprecated, because the plugin now
+    // resolves privacy per item from the declaration this client sends:
+    // it withholds a private item from every observer as two opaque
+    // fields — stricter than blanking a title, and it cannot forget a
+    // field added next year — and it refuses remote control of one at the
+    // session manager across eleven commands.
+    //
+    // Keeping local copies would mean two implementations of one rule,
+    // and the interesting failure is not that they disagree but that only
+    // one of them ratchets. Server-side, privacy never comes off an item
+    // once it is on; a client-side mask is only ever as good as the
+    // current value of a checkbox.
+    //
+    // Hiding information on the way *out* was also the wrong direction.
+    // The client never lies to the server: it reports what it is playing
+    // exactly as it always did, which is what keeps the playlist, handoff
+    // and track selection working for the session itself, and the
+    // filtering happens where the server speaks to anybody else.
+    //
+    // Old settings.json files carrying either key still load — an unknown
+    // property is ignored — and the key is dropped on the next save.
 
     /// <summary>
     /// When privacy mode is active, disallows remote clients from capturing
@@ -143,6 +166,15 @@ public class CompanionSettings
     /// When privacy mode is active, disables all playback event syncing
     /// (scrobbling) to the Shoko server.
     /// Overrides <see cref="PlaybackSyncingEnabled"/>.
+    /// <para>
+    /// Also sent to the media session plugin as
+    /// <c>DisablePlaybackEventSyncing</c>, and both halves are needed.
+    /// The two writers take turns: while a media session is registered the
+    /// companion's own scrobbler stands down and the plugin writes the
+    /// watch state instead. Told only locally, this switch would hold only
+    /// while the hub was down and quietly stop meaning anything once it
+    /// came up.
+    /// </para>
     /// </summary>
     public bool PrivacyModeDisablePlaybackEvents { get; set; }
 
@@ -210,6 +242,16 @@ public class CompanionSettings
     /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
+    /// <para>
+    ///   Governs syncing <b>this companion does itself</b>, which is only
+    ///   what plays while no media session is connected. Registering a
+    ///   session with the Media Session plugin is consent to the server writing
+    ///   watch state from the session's own state reports, so anything
+    ///   played through one is synced by the server whatever this says:
+    ///   leaving it on adds no second writer, and turning it off does not
+    ///   stop the server writing. See
+    ///   <see cref="Playback.PlaybackSessionManager.MediaSessionConnected"/>.
+    /// </para>
     /// </summary>
     public bool PlaybackSyncingEnabled { get; set; } = true;
 
@@ -286,6 +328,13 @@ public class CompanionSettings
     /// When true, restricted content automatically enables privacy mode using
     /// the configured sub-toggles. The session manager sets
     /// <see cref="RestrictedContentPlaying"/> when restricted content plays.
+    /// <para>
+    /// Also sent to the media session plugin as
+    /// <c>AlwaysUsePrivacyModeForRestrictedContent</c>, where restricted is
+    /// a server ruling rather than a client claim — any series the video
+    /// belongs to having it set is enough — and it applies per item, to
+    /// items added after it and never backwards into the queue.
+    /// </para>
     /// </summary>
     public bool PrivacyModeForRestrictedContent { get; set; }
 
