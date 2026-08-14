@@ -59,6 +59,37 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
 5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
 
+### Only one of the two writes the watch state, and it takes an item to hand back
+
+Registering a session is consent to the server writing watch state, so the
+server always writes for a session it holds and the companion stands its own
+scrobbling down instead. `PlaybackSessionManager.MediaSessionConnected` is
+the switch, fed from `PlaybackCoordinator.MediaSessionId` — holding a session
+id *is* being connected, so a socket that drops and reconnects (retried
+forever, the id reclaimed via `ReconnectSession`) never reaches it, and there
+is no second timeout to keep in step with the first.
+
+The two directions are deliberately asymmetric:
+
+- **Connecting stops us immediately**, part-way through an item and all. The
+  server has seen this playback through the state reports since it
+  registered, so it can complete a record it takes over.
+- **Disconnecting resumes us only at the next item.** Ownership is latched
+  per item in `PlaybackSession.SyncSuppressed`, set at `StartSession` /
+  `OnNextFile` and raised but never lowered in between. Resuming mid-item
+  would write a record whose first half is the server's — worst at the end,
+  where `PersistUserData` fires on `PlaybackEnd` and a companion that took
+  over at 80% would mark the item watched having seen a fifth of it. The
+  cost is that the item playing when the session went away syncs no further
+  than the server's last write, which is right: the server owned it.
+
+`PlaybackSyncingEnabled` survives and now means "sync when no media session
+is connected"; the settings window says so. The tick timer keeps running
+while suppressed — `PositionTick` feeds the hub, and silencing that would
+leave *nobody* writing. Both ends of the handover log a line, because one
+that goes wrong is invisible until the watch state is already wrong.
+`PlaybackSessionManagerSyncTests` holds all of it.
+
 ### Track selection goes both ways, and they are not the same way
 
 `SetTracks` is a **command**: the plugin tells this session to switch, and
@@ -154,7 +185,9 @@ Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
   on mpv connect and persisted on every change (default `true`, replaces
   the old `MpvFullScreen` launch toggle)
 - `OnNewUrlAction` — `Replace` / `Ignore` / `Append` (default `Append`)
-- `PlaybackSyncingEnabled` — master toggle for scrobbling (default `true`)
+- `PlaybackSyncingEnabled` — master toggle for the scrobbling this companion
+  does itself, which is only what plays while no media session is connected
+  (default `true`)
 - `PlaybackSyncingBehavior` — `AfterPlayback` / `OnEveryEvent` / `LiveSync` (default `AfterPlayback`)
 - `SkipRestrictedContent` — skip scrobbling for adult content (default `true`)
 - `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`

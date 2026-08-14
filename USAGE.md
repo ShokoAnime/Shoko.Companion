@@ -174,7 +174,7 @@ Logs are under `logs/` — handy when troubleshooting.
 | `Connections` | array | `[]` | Server connections (see README.md for schema). |
 | `MpvPath` | string | `null` | Path to mpv (auto-discovered on first use). |
 | `OnNewUrlAction` | string | `"Append"` | `"Replace"` / `"Ignore"` / `"Append"` when a new URL arrives while playing. |
-| `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing. |
+| `PlaybackSyncingEnabled` | bool | `true` | Master toggle for the playback event syncing this companion does itself. Applies only while no media session is connected — while one is, the server syncs watch state instead. |
 | `PlaybackSyncingBehavior` | enum | `AfterPlayback` | Event syncing aggressiveness: `AfterPlayback` / `OnEveryEvent` / `LiveSync`. |
 | `MediaSessionEnabled` | bool | `false` | Global enabled switch for Media Session API. |
 | `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` / `Always`. |

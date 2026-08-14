@@ -87,6 +87,89 @@ public class PlaybackSessionManager
     private Timer? _scrobbleTimer;
     private const int ScrobbleIntervalMs = 10_000;
 
+    private bool _mediaSessionConnected;
+
+    /// <summary>
+    ///   Whether a media session is registered with the Media Session plugin right
+    ///   now — pushed here by <see cref="PlaybackCoordinator.MediaSessionId"/>,
+    ///   which is set from the hub as the session registers, reconnects and
+    ///   goes away.
+    ///
+    ///   <para>
+    ///     Registering a session is consent to the server writing this
+    ///     viewer's watch state, so while one is up the server is already
+    ///     writing and anything this companion writes is a duplicate. Setting
+    ///     this to <c>true</c> therefore <b>stands the companion's own
+    ///     syncing down immediately</b>, mid-item and all: the server can
+    ///     complete a record it took over part-way, because it has been
+    ///     watching the same playback through the state reports since the
+    ///     session registered.
+    ///   </para>
+    ///   <para>
+    ///     Setting it back to <c>false</c> does <b>not</b> resume mid-item.
+    ///     A watch record is about one whole viewing, and the item playing
+    ///     when the session went away is the server's — most sharply at the
+    ///     end, where <see cref="ScrobbleRequestEventArgs.PersistUserData"/>
+    ///     fires on <see cref="ScrobbleEventType.PlaybackEnd"/> and a
+    ///     companion that took over at 80% would mark the item watched on
+    ///     the strength of the 20% it saw. Ownership is therefore latched per
+    ///     item in <see cref="PlaybackSession.SyncSuppressed"/> and only
+    ///     re-read at an item boundary — <see cref="StartSession"/> or
+    ///     <see cref="OnNextFile"/>. The cost is deliberate: that item syncs
+    ///     to whatever the server last wrote and no further.
+    ///   </para>
+    ///   <para>
+    ///     "Gone" means gone as the hub client sees it, and that is
+    ///     deliberately not a timeout of this class's own. The SignalR
+    ///     connection retries forever and reclaims its session id through
+    ///     <c>ReconnectSession</c>, so a socket that drops and comes back in
+    ///     two seconds never clears the id and never reaches here — only
+    ///     disposing the client (disconnecting, switching servers, quitting)
+    ///     does.
+    ///   </para>
+    /// </summary>
+    public bool MediaSessionConnected
+    {
+        get => _mediaSessionConnected;
+        set
+        {
+            if (_mediaSessionConnected == value)
+                return;
+
+            _mediaSessionConnected = value;
+
+            if (value)
+            {
+                if (_session is { SyncSuppressed: false })
+                {
+                    _session.SyncSuppressed = true;
+                    Logger.Info(
+                        "Media session connected — own syncing stands down now for file {File} at {Pos:F0}ms; the server owns this viewing",
+                        _session.VideoId, _session.PositionMs);
+                }
+                else
+                {
+                    Logger.Info("Media session connected — own syncing is off for as long as it lasts");
+                }
+
+                // The hub is how the server sees this playback at all, and the
+                // position reports it needs ride on the same timer as our own
+                // scrobbling. Standing down must not silence them.
+                EnsureScrobbleTimer();
+            }
+            else if (_session is not null)
+            {
+                Logger.Info(
+                    "Media session gone — own syncing stays off for file {File}, which the server owned; it resumes on the next item",
+                    _session.VideoId);
+            }
+            else
+            {
+                Logger.Info("Media session gone — own syncing resumes on the next item");
+            }
+        }
+    }
+
     private static readonly Regex EpisodeTitlePattern = new(@"^Episode\s+\d+$", RegexOptions.IgnoreCase);
 
     private const double AutoWatchRatio = 0.975;
@@ -141,9 +224,23 @@ public class PlaybackSessionManager
             TmdbMovie = episodeIds?.TmdbMovie,
             TvdbShow = episodeIds?.TvdbShow,
             ImdbMovie = episodeIds?.ImdbMovie,
+            // An item boundary is the one point where "who owns this record"
+            // has a single answer, so it is the only point at which ownership
+            // is re-read. See MediaSessionConnected.
+            SyncSuppressed = _mediaSessionConnected,
         };
 
-        if (settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
+        Logger.Info(_mediaSessionConnected
+            ? "File {File}: the server owns this viewing — own syncing off, a media session is connected"
+            : "File {File}: this companion owns this viewing — no media session is connected", fileId);
+
+        var ownSyncingAllowed = settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents);
+
+        // The timer beats for two things — our own scrobbling, and the
+        // position ticks the media session hub is fed from — so it runs while
+        // either wants it. Standing down silences the scrobbles, never the
+        // ticks.
+        if (ownSyncingAllowed || _mediaSessionConnected)
         {
             _scrobbleTimer = new Timer(OnScrobbleTimer, null, ScrobbleIntervalMs, ScrobbleIntervalMs);
             Logger.Debug("Live scrobble timer started: interval={Interval}ms", ScrobbleIntervalMs);
@@ -289,14 +386,18 @@ public class PlaybackSessionManager
         var audioStreamOrdinal = _session.AudioStreamOrdinal;
         var subtitleStreamOrdinal = _session.SubtitleStreamOrdinal;
         var shouldSendStop = ShouldSendEvent(isPauseOrResume: true);
+        var syncSuppressed = _session.SyncSuppressed;
 
-        Logger.Info("Session ended at {Pos:F0}ms (dur={Dur:F0}ms, watched={Watched}, eof={Eof}, sendStop={SendStop})",
-            position, _session?.DurationMs ?? 0, watched, _session?.EofReached, shouldSendStop);
+        Logger.Info("Session ended at {Pos:F0}ms (dur={Dur:F0}ms, watched={Watched}, eof={Eof}, sendStop={SendStop}, serverOwned={Suppressed})",
+            position, _session?.DurationMs ?? 0, watched, _session?.EofReached, shouldSendStop, syncSuppressed);
         SettingsProvider.Instance.Settings.RestrictedContentPlaying = false;
         _session = null;
 
+        if (syncSuppressed)
+            Logger.Info("File {File}: no stop scrobble — the server owned this viewing", fileId);
+
         var settings = SettingsProvider.Instance.Settings;
-        if (shouldSendStop && settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
+        if (shouldSendStop && !syncSuppressed && settings.PlaybackSyncingEnabled && !(settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
         {
             Task.Run(() => ScrobbleRequested?.Invoke(this, new ScrobbleRequestEventArgs
             {
@@ -325,6 +426,12 @@ public class PlaybackSessionManager
     {
         if (_session is null)
             return;
+
+        if (_session.SyncSuppressed)
+        {
+            Logger.Info("File {File}: not finalized by us — the server owned this viewing", _session.VideoId);
+            return;
+        }
 
         var settings = SettingsProvider.Instance.Settings;
         if (!settings.PlaybackSyncingEnabled || (settings.EffectivePrivacyMode && settings.PrivacyModeDisablePlaybackEvents))
@@ -405,6 +512,16 @@ public class PlaybackSessionManager
         _session.ScrobbleTickCount = 0;
         _session.TickThreshold = SettingsProvider.Instance.Settings.SyncUserDataLiveScrobbleTickThreshold;
 
+        // An item boundary — the one point where ownership of a watch record
+        // has a single answer, and so the only point at which it is re-read.
+        // See MediaSessionConnected.
+        var wasSuppressed = _session.SyncSuppressed;
+        _session.SyncSuppressed = _mediaSessionConnected;
+        if (wasSuppressed && !_mediaSessionConnected)
+            Logger.Info("File {File}: own syncing resumes here — the media session is gone and this is a new item", fileId);
+        else if (!wasSuppressed && _mediaSessionConnected)
+            Logger.Info("File {File}: the server owns this viewing — own syncing off, a media session is connected", fileId);
+
         EmitDiscordPresence();
     }
 
@@ -449,6 +566,22 @@ public class PlaybackSessionManager
             EmitPlaybackEvent(ScrobbleEventType.PlaybackProgress, _session.PositionMs, watched: null);
     }
 
+    /// <summary>
+    ///   Start the tick timer if a session is running without one. The timer
+    ///   is normally started by <see cref="StartSession"/>, which skips it
+    ///   when nothing wants it; a media session connecting mid-item is the
+    ///   case where something starts wanting it later, because the hub's
+    ///   position reports ride on the same beat.
+    /// </summary>
+    private void EnsureScrobbleTimer()
+    {
+        if (_session is null || _scrobbleTimer is not null)
+            return;
+
+        _scrobbleTimer = new Timer(OnScrobbleTimer, null, ScrobbleIntervalMs, ScrobbleIntervalMs);
+        Logger.Debug("Live scrobble timer started: interval={Interval}ms", ScrobbleIntervalMs);
+    }
+
     private bool ShouldSendEvent(bool isPauseOrResume = false)
     {
         if (_session is null) return false;
@@ -466,6 +599,15 @@ public class PlaybackSessionManager
     {
         if (_session is null)
             return;
+
+        // The server is writing this item's watch state, so anything we write
+        // is a second writer on one record. See MediaSessionConnected.
+        if (_session.SyncSuppressed)
+        {
+            Logger.Trace("Scrobble {Event} suppressed for file {File} — the server owns this viewing",
+                eventType, _session.VideoId);
+            return;
+        }
 
         var settings = SettingsProvider.Instance.Settings;
         if (!settings.PlaybackSyncingEnabled)
@@ -609,5 +751,13 @@ public class PlaybackSessionManager
 
         public int ScrobbleTickCount;
         public int TickThreshold;
+
+        /// <summary>
+        ///   True when the server owns this item's watch record and this
+        ///   companion writes none of it. Latched at the item boundary from
+        ///   <see cref="PlaybackSessionManager.MediaSessionConnected"/>, and
+        ///   raised — never lowered — part-way through.
+        /// </summary>
+        public bool SyncSuppressed;
     }
 }

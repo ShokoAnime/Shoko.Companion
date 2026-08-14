@@ -81,8 +81,25 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private bool _lastPrivacyMode;
     private bool _lastEffectivePrivacyMode;
 
+    private Guid? _mediaSessionId;
+
     /// <inheritdoc/>
-    public Guid? MediaSessionId { get; set; }
+    public Guid? MediaSessionId
+    {
+        get => _mediaSessionId;
+        set
+        {
+            _mediaSessionId = value;
+
+            // Holding a session id is the whole of "a media session is
+            // connected": MediaSessionClient sets one when it registers or
+            // reclaims a session and clears it only when the client is
+            // disposed. A socket that drops and comes back retries forever and
+            // reclaims the same id, so it never passes through here — which is
+            // why the session manager needs no reconnect timeout of its own.
+            _sessionManager.MediaSessionConnected = value is not null;
+        }
+    }
 
     // Rewritten copies of Shoko playlists, written out when the playlist
     // carried media session URLs whose sessionId had to become ours. Kept until

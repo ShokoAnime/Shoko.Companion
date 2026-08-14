@@ -24,8 +24,31 @@ A lightweight, cross-platform **system-tray companion** for [Shoko Server](https
 
 When the **Media Session** plugin is installed on the Shoko server, the companion can connect to its SignalR hub for remote playback control. This enables:
 - Other devices/clients for the user to see what's playing and send play/pause/seek/stop commands
-- Live state updates pushed via SignalR alongside REST-based scrobbling
+- Live state updates pushed via SignalR
 - Per-connection auto-connect with manual Connect/Disconnect in settings
+
+### Who writes the watch state
+
+Registering a session with the plugin is consent to the **server** writing
+watch state from the session's own state reports. So the two writers take
+turns rather than both running:
+
+- **While a media session is connected, this companion's own scrobbling is
+  off.** It stops the moment the session registers, mid-item included — the
+  server has been watching the same playback through the state reports since
+  it registered, so it can finish a record it takes over.
+- **When the session goes away, scrobbling resumes at the next item, never
+  mid-item.** A watch record describes one whole viewing; taking one over at
+  80% would mark it watched on the strength of the last 20%. The item playing
+  when the session went away therefore syncs to whatever the server last
+  wrote and no further, which is correct — the server owned that viewing.
+- "Gone" means the hub client gave up its session, not that a socket
+  blinked: the connection retries indefinitely and reclaims its session id,
+  so a drop that reconnects changes nothing.
+
+Both ends of the handover are logged (`PlaybackSessionManager`), because a
+handover that goes wrong is otherwise invisible until the watch state is
+already wrong.
 
 ---
 
@@ -101,7 +124,7 @@ SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shok
 | `MpvPath` | string | `null` | Path to the mpv binary. Auto-discovered and saved on first use. |
 | `IsFullscreen` | bool | `true` | Saved current fullscreen state. Restored when mpv connects and persisted on every change. Replaces the old `MpvFullScreen` launch toggle. |
 | `OnNewUrlAction` | string | `"Append"` | When a new `shoko:` URL arrives while playing: `"Replace"` (stop + start new), `"Ignore"` (silently discard), or `"Append"` (add to mpv playlist). |
-| `PlaybackSyncingEnabled` | bool | `true` | Master toggle for all playback event syncing (start/end/pause/resume). |
+| `PlaybackSyncingEnabled` | bool | `true` | Master toggle for the playback event syncing this companion does itself (start/end/pause/resume). Applies only while no media session is connected — see [Who writes the watch state](#who-writes-the-watch-state). |
 | `PlaybackSyncingBehavior` | enum | `AfterPlayback` | How aggressively to sync playback events: `AfterPlayback` (stop only), `OnEveryEvent` (play/pause/resume/stop), `LiveSync` (everything + periodic progress). |
 | `MediaSessionAutoConnectId` | Guid | `null` | Server connection ID to auto-connect for the Media Session SignalR hub. Null disables auto-connect. |
 | `SyncUserDataInitialSkipEventCount` | int | `3` | Number of initial non-pause events to skip after starting, letting the player settle. |
