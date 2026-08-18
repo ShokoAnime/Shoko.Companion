@@ -33,6 +33,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private HubConnection? _connection;
     private Guid? _sessionId;
     private PlaybackStateUpdateDto? _lastState;
+    private PlaybackStateUpdateDto? _reportedState;
     private CancellationTokenSource? _stoppedTimerCts;
     private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(10);
     private PlaybackState _playbackState;
@@ -537,7 +538,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   fetched before the hub connects at all.
     /// </summary>
     /// <param name="sessionId">The session id, or <c>null</c> when we hold none.</param>
-    private void SetSessionId(Guid? sessionId)
+    internal void SetSessionId(Guid? sessionId)
     {
         _sessionId = sessionId;
         _coordinator.MediaSessionId = sessionId;
@@ -547,6 +548,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
         // still stand.
         _lastSentSettings = null;
         _lastSentCapabilities = null;
+        // And the same for the state: every registration and every reclaim
+        // comes through here, so the report that follows one is whole.
+        _reportedState = null;
     }
 
     /// <summary>
@@ -564,6 +568,13 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///     a way no list of call sites can be trusted to cover. Unchanged
     ///     declarations cost nothing: the push compares before it sends.
     ///   </para>
+    ///   <para>
+    ///     Callers hand in the whole picture and what goes out is only what
+    ///     moved — see <see cref="PatchToSend"/>. The whole picture is what
+    ///     <see cref="_lastState"/> keeps, because that is the payload a
+    ///     registration or a reclaim carries, and a baseline cannot be
+    ///     described in deltas.
+    ///   </para>
     /// </summary>
     /// <param name="state">The current playback state to report.</param>
     public async Task ReportStateAsync(PlaybackStateUpdateDto state)
@@ -576,19 +587,54 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         await UpdateCapabilitiesOnHubAsync();
 
-        try
+        if (PatchToSend(state) is { } patch)
         {
-            await _connection.InvokeAsync("UpdateState", state);
-        }
-        catch (Exception ex)
-        {
-            Logger.Debug(ex, "MediaSession: Failed to report state");
+            try
+            {
+                await _connection.InvokeAsync("UpdateState", patch);
+            }
+            catch (Exception ex)
+            {
+                // Whether it landed is not knowable from here, so stop
+                // claiming to know: the next report goes out whole.
+                _reportedState = null;
+                Logger.Debug(ex, "MediaSession: Failed to report state");
+            }
         }
 
         // If playback just stopped, schedule an auto-transition to Idle
         // after a grace period. Any new play/pause/resume cancels it.
         if (state.State == PlaybackState.Stopped.ToWireName())
             StartStoppedTimer();
+    }
+
+    /// <summary>
+    ///   What to actually put on the wire for <paramref name="state"/>:
+    ///   the fields that moved since the last report the server accepted,
+    ///   or the whole of it when there is none, or <c>null</c> when
+    ///   nothing moved and there is nothing to say.
+    ///
+    ///   <para>
+    ///     The new baseline is taken here rather than after the send, so
+    ///     the caller has to drop it when the send throws.
+    ///   </para>
+    /// </summary>
+    /// <param name="state">The whole picture, as the caller built it.</param>
+    /// <returns>The frame to send, or <c>null</c> to send nothing.</returns>
+    internal PlaybackStateUpdateDto? PatchToSend(PlaybackStateUpdateDto state)
+    {
+        var patch = state.PatchAgainst(_reportedState);
+
+        // A reported idle clears the item triple, the position, the
+        // duration and the tracks on the far side, so what it holds after
+        // one is not what this report said. Asked through the flag because
+        // an unnamed state reads as idle.
+        _reportedState = state.ShouldSerializeState()
+            && state.State == PlaybackState.Idle.ToWireName()
+            ? null
+            : state;
+
+        return patch;
     }
 
     /// <summary>
@@ -645,8 +691,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await Task.Delay(StoppedToIdleDelay, ct);
             Logger.Trace("MediaSession: Stopped→Idle timer fired — reporting Idle");
             // The four device properties are read from the coordinator the
-            // way the other report call sites do: an idle device still has
-            // a volume, and stating it is not the same as omitting it.
+            // way the other report call sites do. Omitting them no longer
+            // wipes them — absent means unchanged now — but this report
+            // becomes _lastState, and _lastState is what a registration or
+            // a reclaim carries as the whole picture.
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
                 State = PlaybackState.Idle.ToWireName(),
@@ -1202,6 +1250,89 @@ public sealed class PlaybackStateUpdateDto
     private readonly bool _tracksSet;
 
     /// <summary>
+    ///   Initializes a new report, which names nothing until something is
+    ///   set on it.
+    /// </summary>
+    public PlaybackStateUpdateDto()
+    {
+    }
+
+    /// <summary>
+    ///   Initializes a report reduced to the fields of
+    ///   <paramref name="report"/> that <paramref name="baseline"/> does
+    ///   not already hold at the same value.
+    /// </summary>
+    /// <param name="report">The report to reduce.</param>
+    /// <param name="baseline">The report the far side last accepted.</param>
+    private PlaybackStateUpdateDto(PlaybackStateUpdateDto report, PlaybackStateUpdateDto baseline)
+    {
+        State = report.State;
+        _stateSet = Moved(report._stateSet, report.State, baseline._stateSet, baseline.State);
+        CurrentItem = report.CurrentItem;
+        _currentItemSet = Moved(report._currentItemSet, report.CurrentItem, baseline._currentItemSet, baseline.CurrentItem);
+        NextItem = report.NextItem;
+        _nextItemSet = Moved(report._nextItemSet, report.NextItem, baseline._nextItemSet, baseline.NextItem);
+        PreviousItem = report.PreviousItem;
+        _previousItemSet = Moved(report._previousItemSet, report.PreviousItem, baseline._previousItemSet, baseline.PreviousItem);
+        Position = report.Position;
+        _positionSet = Moved(report._positionSet, report.Position, baseline._positionSet, baseline.Position);
+        Duration = report.Duration;
+        _durationSet = Moved(report._durationSet, report.Duration, baseline._durationSet, baseline.Duration);
+        IsPaused = report.IsPaused;
+        _isPausedSet = Moved(report._isPausedSet, report.IsPaused, baseline._isPausedSet, baseline.IsPaused);
+        Volume = report.Volume;
+        _volumeSet = Moved(report._volumeSet, report.Volume, baseline._volumeSet, baseline.Volume);
+        IsMuted = report.IsMuted;
+        _isMutedSet = Moved(report._isMutedSet, report.IsMuted, baseline._isMutedSet, baseline.IsMuted);
+        PlaybackSpeed = report.PlaybackSpeed;
+        _playbackSpeedSet = Moved(report._playbackSpeedSet, report.PlaybackSpeed, baseline._playbackSpeedSet, baseline.PlaybackSpeed);
+        IsFullscreen = report.IsFullscreen;
+        _isFullscreenSet = Moved(report._isFullscreenSet, report.IsFullscreen, baseline._isFullscreenSet, baseline.IsFullscreen);
+        Tracks = report.Tracks;
+        _tracksSet = Moved(report._tracksSet, report.Tracks, baseline._tracksSet, baseline.Tracks);
+    }
+
+    /// <summary>
+    ///   This report reduced to what moved since <paramref name="baseline"/>,
+    ///   the last report the server accepted on this connection.
+    ///
+    ///   <para>
+    ///     A <c>null</c> baseline says what the server holds is unknown — a
+    ///     fresh registration, a reclaimed session, a send that failed — and
+    ///     the answer is then the whole report, because a patch only
+    ///     converges on a baseline that is really there. A field the
+    ///     baseline never named is kept whatever its value: silence is not
+    ///     a claim. <c>null</c> comes back when nothing moved at all.
+    ///   </para>
+    /// </summary>
+    /// <param name="baseline">
+    ///   The report the server last accepted, or <c>null</c> when unknown.
+    /// </param>
+    /// <returns>The frame to send, or <c>null</c> to send nothing.</returns>
+    internal PlaybackStateUpdateDto? PatchAgainst(PlaybackStateUpdateDto? baseline)
+    {
+        if (baseline is null)
+            return this;
+
+        var patch = new PlaybackStateUpdateDto(this, baseline);
+        return patch.NamesNothing ? null : patch;
+    }
+
+    /// <summary>Whether this report names no field at all.</summary>
+    private bool NamesNothing
+        => !(_stateSet || _currentItemSet || _nextItemSet || _previousItemSet
+            || _positionSet || _durationSet || _isPausedSet || _volumeSet
+            || _isMutedSet || _playbackSpeedSet || _isFullscreenSet || _tracksSet);
+
+    /// <summary>
+    ///   Whether a field this report named says something the far side
+    ///   does not already hold. A field the baseline never named counts as
+    ///   moved however it compares.
+    /// </summary>
+    private static bool Moved<T>(bool named, T value, bool baselineNamed, T baselineValue)
+        => named && (!baselineNamed || !EqualityComparer<T>.Default.Equals(value, baselineValue));
+
+    /// <summary>
     ///   The playback state, spelled as the server's wire name — see
     ///   <see cref="PlaybackStateWire.ToWireName"/>, which is the only
     ///   thing that should ever fill this in.
@@ -1419,8 +1550,15 @@ public sealed class PlaybackStateUpdateDto
 /// <summary>
 /// Lean media item info sent in state updates, mirroring the server's
 /// PlaybackStateUpdateMediaItemInfo.
+///
+/// <para>
+///   A record for its equality: a report is patched against the last one
+///   the server accepted, and the coordinator hands out a fresh instance
+///   whenever the playlist is rebuilt, so comparing references would
+///   re-send the whole item on every position tick.
+/// </para>
 /// </summary>
-public sealed class MediaItemInfoDto
+public sealed record MediaItemInfoDto
 {
     /// <summary>
     /// Human-readable title, or null if unknown.

@@ -84,6 +84,57 @@ System.Text.Json protocol:
   volume nobody had touched. `StateReportIsPatchTests` captures real
   frames through the configured protocol and pins both halves.
 
+### And a patch is what it sends: what moved, not everything
+
+The five `ReportStateAsync` call sites still hand in the whole picture and
+none of them knows about any of this. `PatchToSend` reduces the report to
+the fields that moved since the last one the server accepted, so a position
+tick is `{"Position":"00:00:35"}` where it was a 469-byte snapshot. Deciding
+it centrally rather than per call site is the point: which fields moved is
+not something a call site can know — a volume change and a tick arrive
+through different events and can carry each other's news — and the caller's
+whole picture is needed anyway, because `_lastState` is the payload a
+registration and a reclaim carry, and a baseline cannot be described in
+deltas.
+
+Three things drop the baseline, and the first is the one that would break
+quietly:
+
+- **`SetSessionId`**, which every registration, every reclaim and the
+  teardown goes through. SignalR orders messages within a connection, so a
+  stream of patches converges; across a reconnect it does not, and the
+  server may hold nothing or state from a previous session. The report
+  after one is therefore whole.
+- **A send that threw**, because whether it landed is not knowable here.
+- **A report that says `idle`**, because the far side clears the item
+  triple, the position, the duration and the tracks on one — so what it
+  holds afterwards is not what the report said, and the same item playing
+  again would otherwise be omitted as unchanged against a server holding
+  none. Asked through `ShouldSerializeState()`, since an unnamed state
+  reads as `idle`.
+
+A field the baseline never named is always sent: silence about a field is
+not a claim about its value. `MediaItemInfoDto` and
+`PlaybackTrackSelectionDto` are records for the comparison — the
+coordinator rebuilds both on every read, so reference equality would put
+the whole item back on the wire every tick. The stopped-to-idle follow-up
+keeps filling its four device properties for a new reason: omitting them no
+longer wipes them, but that report becomes `_lastState`, and a registration
+carrying no volume is the same wipe by another route.
+
+**A patch is not a heartbeat, and nothing here treats it as one.** A client
+that correctly goes quiet — and it does, for as long as playback stays
+paused — looks like a dead one to anything inferring liveness from report
+traffic. Nothing on this side does: `MediaSessionClient` owns no clock at
+all, the stopped→idle timer is driven by calls to `ReportStateAsync` rather
+than by sends (the cancel/restart bracket sits outside the send, so a report
+that moves nothing still resets it), the scrobble timer feeds reports rather
+than being fed by them, and reconnection hangs off the transport closing.
+No `KeepAliveInterval` or `ServerTimeout` is configured anywhere here, so
+SignalR's defaults stand: the client pings on its own when it has sent
+nothing for 15s, and its 30s server timeout is reset by anything received.
+What the far side makes of the silence is the far side's question.
+
 ### Only one of the two writes the watch state, and it takes an item to hand back
 
 Registering a session is consent to the server writing watch state, so the

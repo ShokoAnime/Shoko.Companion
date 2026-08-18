@@ -28,8 +28,12 @@ namespace Shoko.Companion.Server.Models;
 /// nothing from it. On <c>UpdateState</c> it is this session's report of
 /// what it is actually playing, and that is the only thing the plugin
 /// stores and the only thing a handoff carries onwards.
+///
+/// A record for its equality: the coordinator builds a new selection on
+/// every read, so a report patched against the last one the server
+/// accepted has nothing but the values to go on.
 /// </summary>
-public sealed class PlaybackTrackSelectionDto
+public sealed record PlaybackTrackSelectionDto
 {
     /// <summary>
     /// Ordinal among the video streams.
