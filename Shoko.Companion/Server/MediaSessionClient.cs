@@ -5,8 +5,11 @@ using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 using NLog;
 using Shoko.Companion.Configuration;
 using Shoko.Companion.Playback;
@@ -149,6 +152,26 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
+    ///   How this client serialises the hub payload: Newtonsoft, with the
+    ///   plain resolver the Shoko host registers on its own side, so the
+    ///   <c>[JsonProperty]</c> names the DTOs declare are the names on the
+    ///   wire rather than a camel-cased rewrite of them.
+    ///
+    ///   <para>
+    ///     Newtonsoft rather than System.Text.Json because the DTOs are
+    ///     written for it — the attributes were inert under the default
+    ///     protocol, and <c>ShouldSerialize…</c>, which is what lets a
+    ///     report omit a field instead of nulling it, exists only here.
+    ///     SignalR's own Newtonsoft default is a camel-casing resolver
+    ///     that overrides specified names, so leaving it alone would keep
+    ///     the attributes inert.
+    ///   </para>
+    /// </summary>
+    /// <param name="options">The protocol options to configure.</param>
+    internal static void ConfigureHubPayload(NewtonsoftJsonHubProtocolOptions options)
+        => options.PayloadSerializerSettings.ContractResolver = new DefaultContractResolver();
+
+    /// <summary>
     /// Connect to the hub and register as a companion session.
     /// </summary>
     public async Task ConnectAsync()
@@ -161,6 +184,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             {
                 options.Headers["apikey"] = _apiKey;
             })
+            .AddNewtonsoftJsonProtocol(ConfigureHubPayload)
             .WithAutomaticReconnect(new RetryDelayProvider())
             .Build();
 
@@ -621,9 +645,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
             await Task.Delay(StoppedToIdleDelay, ct);
             Logger.Trace("MediaSession: Stopped→Idle timer fired — reporting Idle");
             // The four device properties are read from the coordinator the
-            // way the other report call sites do. Leaving them unset does
-            // not omit them: the hub protocol writes them as explicit
-            // nulls, and the server reads a null as "the device has none".
+            // way the other report call sites do: an idle device still has
+            // a volume, and stating it is not the same as omitting it.
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
                 State = PlaybackState.Idle.ToWireName(),
@@ -1145,78 +1168,229 @@ public sealed class PlaybackRequestDto
 
 /// <summary>
 /// DTO for reporting state to the hub, mirroring the server's PlaybackStateUpdate.
+///
+/// <para>
+///   <b>A report is a patch, not a snapshot.</b> Every property records
+///   that its setter ran, and <c>ShouldSerialize…</c> hands that flag to
+///   Newtonsoft, so a property this client never touched is left off the
+///   frame entirely while one set to <c>null</c> is written as null. The
+///   server reads the same distinction back through its own
+///   <c>{Field}IsSet</c> flags: absent means unchanged, present means
+///   this is the new value, null included.
+/// </para>
+/// <para>
+///   [#289]. Without it a deliberately minimal report — the
+///   stopped-to-idle follow-up names a handful of fields on purpose —
+///   wrote null over the volume, the mute state, the speed and the
+///   fullscreen flag, because the wire could not carry "I am not telling
+///   you". The flags are private and never appear on the wire.
+/// </para>
 /// </summary>
 public sealed class PlaybackStateUpdateDto
 {
+    private readonly bool _stateSet;
+    private readonly bool _currentItemSet;
+    private readonly bool _nextItemSet;
+    private readonly bool _previousItemSet;
+    private readonly bool _positionSet;
+    private readonly bool _durationSet;
+    private readonly bool _isPausedSet;
+    private readonly bool _volumeSet;
+    private readonly bool _isMutedSet;
+    private readonly bool _playbackSpeedSet;
+    private readonly bool _isFullscreenSet;
+    private readonly bool _tracksSet;
+
     /// <summary>
     ///   The playback state, spelled as the server's wire name — see
     ///   <see cref="PlaybackStateWire.ToWireName"/>, which is the only
     ///   thing that should ever fill this in.
     /// </summary>
     [JsonProperty("State")]
-    public string State { get; init; } = "idle";
+    public string State
+    {
+        get;
+        init
+        {
+            _stateSet = true;
+            field = value;
+        }
+    } = "idle";
+
+    /// <summary>Whether the report named <see cref="State"/>.</summary>
+    public bool ShouldSerializeState() => _stateSet;
 
     /// <summary>
     /// The currently playing media item, or null if none.
     /// </summary>
     [JsonProperty("CurrentItem")]
-    public MediaItemInfoDto? CurrentItem { get; init; }
+    public MediaItemInfoDto? CurrentItem
+    {
+        get;
+        init
+        {
+            _currentItemSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="CurrentItem"/>.</summary>
+    public bool ShouldSerializeCurrentItem() => _currentItemSet;
 
     /// <summary>
     /// Next item in the play queue, or null if none.
     /// </summary>
     [JsonProperty("NextItem")]
-    public MediaItemInfoDto? NextItem { get; init; }
+    public MediaItemInfoDto? NextItem
+    {
+        get;
+        init
+        {
+            _nextItemSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="NextItem"/>.</summary>
+    public bool ShouldSerializeNextItem() => _nextItemSet;
 
     /// <summary>
     /// Previous item in the play queue, or null if none.
     /// </summary>
     [JsonProperty("PreviousItem")]
-    public MediaItemInfoDto? PreviousItem { get; init; }
+    public MediaItemInfoDto? PreviousItem
+    {
+        get;
+        init
+        {
+            _previousItemSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="PreviousItem"/>.</summary>
+    public bool ShouldSerializePreviousItem() => _previousItemSet;
 
     /// <summary>
     /// The current playback position.
     /// </summary>
     [JsonProperty("Position")]
-    public TimeSpan Position { get; init; }
+    public TimeSpan Position
+    {
+        get;
+        init
+        {
+            _positionSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="Position"/>.</summary>
+    public bool ShouldSerializePosition() => _positionSet;
 
     /// <summary>
     /// The total duration, if known.
     /// </summary>
     [JsonProperty("Duration")]
-    public TimeSpan? Duration { get; init; }
+    public TimeSpan? Duration
+    {
+        get;
+        init
+        {
+            _durationSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="Duration"/>.</summary>
+    public bool ShouldSerializeDuration() => _durationSet;
 
     /// <summary>
     /// Whether playback is currently paused.
     /// </summary>
     [JsonProperty("IsPaused")]
-    public bool IsPaused { get; init; }
+    public bool IsPaused
+    {
+        get;
+        init
+        {
+            _isPausedSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="IsPaused"/>.</summary>
+    public bool ShouldSerializeIsPaused() => _isPausedSet;
 
     /// <summary>
     /// The current volume (percent, 0–130), or null if unknown.
     /// </summary>
     [JsonProperty("Volume")]
-    public int? Volume { get; init; }
+    public int? Volume
+    {
+        get;
+        init
+        {
+            _volumeSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="Volume"/>.</summary>
+    public bool ShouldSerializeVolume() => _volumeSet;
 
     /// <summary>
     /// Whether audio is muted, or null if unknown.
     /// </summary>
     [JsonProperty("IsMuted")]
-    public bool? IsMuted { get; init; }
+    public bool? IsMuted
+    {
+        get;
+        init
+        {
+            _isMutedSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="IsMuted"/>.</summary>
+    public bool ShouldSerializeIsMuted() => _isMutedSet;
 
     /// <summary>
     /// The current playback speed multiplier (e.g. 1.0, 4.0), or null
     /// when unknown.
     /// </summary>
     [JsonProperty("PlaybackSpeed")]
-    public double? PlaybackSpeed { get; init; }
+    public double? PlaybackSpeed
+    {
+        get;
+        init
+        {
+            _playbackSpeedSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="PlaybackSpeed"/>.</summary>
+    public bool ShouldSerializePlaybackSpeed() => _playbackSpeedSet;
 
     /// <summary>
     /// Whether the player window is currently fullscreen, or null when
     /// unknown.
     /// </summary>
     [JsonProperty("IsFullscreen")]
-    public bool? IsFullscreen { get; init; }
+    public bool? IsFullscreen
+    {
+        get;
+        init
+        {
+            _isFullscreenSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="IsFullscreen"/>.</summary>
+    public bool ShouldSerializeIsFullscreen() => _isFullscreenSet;
 
     /// <summary>
     /// The tracks this session is playing with, or null to say nothing.
@@ -1228,7 +1402,18 @@ public sealed class PlaybackStateUpdateDto
     /// for.
     /// </summary>
     [JsonProperty("Tracks")]
-    public PlaybackTrackSelectionDto? Tracks { get; init; }
+    public PlaybackTrackSelectionDto? Tracks
+    {
+        get;
+        init
+        {
+            _tracksSet = true;
+            field = value;
+        }
+    }
+
+    /// <summary>Whether the report named <see cref="Tracks"/>.</summary>
+    public bool ShouldSerializeTracks() => _tracksSet;
 }
 
 /// <summary>

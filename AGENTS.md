@@ -11,6 +11,7 @@ Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits
 - **NLog 6.1.3** — structured logging (JSONL files under `{ConfigRoot}/logs/`)
 - **Newtonsoft.Json 13** — all JSON serialization (NO System.Text.Json)
 - **Microsoft.AspNetCore.SignalR.Client 10.0** — Media Session plugin hub connection
+- **Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson 10.0** — the hub payload serialiser, so the connection obeys the Newtonsoft rule too
 - **DiscordRichPresence 1.6.1.70** — Discord "Now Playing" integration
 - **xunit** — tests
 
@@ -58,6 +59,30 @@ The companion optionally integrates with the Media Session plugin via SignalR:
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
 5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
+
+### The hub connection serialises with Newtonsoft, and a state report is a patch
+
+`ConnectAsync` registers `AddNewtonsoftJsonProtocol` with a plain
+`DefaultContractResolver` — the same registration the Shoko host makes on
+its side — through `MediaSessionClient.ConfigureHubPayload`. Two things
+follow, and neither was true while the connection ran on the default
+System.Text.Json protocol:
+
+- **The `[JsonProperty]` names on the DTOs are the names on the wire.**
+  They were inert before: STJ ignores them and camel-cased everything, and
+  it only worked because Newtonsoft binds case-insensitively on the far
+  side. Note that SignalR's *own* Newtonsoft default is a camel-casing
+  resolver with `OverrideSpecifiedNames` on, so the plain resolver is what
+  does the work here, not the protocol swap.
+- **`PlaybackStateUpdateDto` can omit a field instead of nulling it.** Each
+  property records that its setter ran and hands the flag to
+  `ShouldSerialize…`, so an untouched property is absent from the frame
+  while one set to `null` is written as null — `undefined` versus `null`,
+  in the JS reading. The server tells the two apart through its own
+  `{Field}IsSet` flags: absent means unchanged, present means this is the
+  new value. Without it a deliberately minimal report wrote null over a
+  volume nobody had touched. `StateReportIsPatchTests` captures real
+  frames through the configured protocol and pins both halves.
 
 ### Only one of the two writes the watch state, and it takes an item to hand back
 

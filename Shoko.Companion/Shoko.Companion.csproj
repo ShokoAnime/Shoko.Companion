@@ -47,6 +47,7 @@
         <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
         <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+        <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson" Version="10.0.0" />
     </ItemGroup>
     <ItemGroup>
         <InternalsVisibleTo Include="Shoko.Companion.Tests" />

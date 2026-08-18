@@ -5,7 +5,9 @@ using System.Linq;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.Options;
 using Shoko.Companion.Playback;
 using Shoko.Companion.Server;
 using Xunit;
@@ -42,10 +44,10 @@ namespace Shoko.Companion.Tests;
 ///   </para>
 ///   <para>
 ///     System.Text.Json appears here despite the app's "Newtonsoft for
-///     everything" rule, and on purpose: the hub connection serialises
-///     with it whatever this codebase prefers, and it is the stricter of
-///     the two readers. A name that satisfies both is a name that does
-///     not depend on which protocol a host happens to register.
+///     everything" rule, and despite the hub connection now taking a
+///     Newtonsoft protocol: it is the stricter of the two readers, and a
+///     name that satisfies both is a name that does not depend on which
+///     protocol a host happens to register.
 ///   </para>
 /// </summary>
 public class PlaybackStateWireTests
@@ -171,11 +173,10 @@ public class PlaybackStateWireTests
     }
 
     /// <summary>
-    ///   And the name survives the trip out. The DTO carries Newtonsoft
-    ///   attributes but the hub connection serialises with
-    ///   System.Text.Json, so what is asserted here is the frame this
-    ///   client actually puts on the wire rather than what the attributes
-    ///   suggest it would.
+    ///   And the name survives the trip out — asserted on the frame this
+    ///   client actually puts on the wire, through the protocol
+    ///   <c>ConnectAsync</c> builds the connection with, rather than on
+    ///   what the attributes suggest it would be.
     /// </summary>
     [Fact]
     public void TheEmittedFrame_CarriesTheWireName()
@@ -190,13 +191,17 @@ public class PlaybackStateWireTests
 
     /// <summary>
     ///   Serialise a state report exactly as the hub connection does:
-    ///   the default <see cref="JsonHubProtocol"/>, which is what
-    ///   <c>HubConnectionBuilder.Build()</c> installs.
+    ///   <see cref="NewtonsoftJsonHubProtocol"/>, configured by the same
+    ///   <see cref="MediaSessionClient.ConfigureHubPayload"/> that
+    ///   <c>ConnectAsync</c> hands to <c>AddNewtonsoftJsonProtocol</c>.
     /// </summary>
     private static string WriteInvocation(PlaybackStateUpdateDto state)
     {
+        var options = new NewtonsoftJsonHubProtocolOptions();
+        MediaSessionClient.ConfigureHubPayload(options);
+
         var buffer = new ArrayBufferWriter<byte>();
-        new JsonHubProtocol().WriteMessage(
+        new NewtonsoftJsonHubProtocol(Options.Create(options)).WriteMessage(
             new InvocationMessage("UpdateState", [state]), buffer);
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
