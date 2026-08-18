@@ -42,6 +42,15 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private SessionSettingsDto? _lastSentSettings;
 
     /// <summary>
+    ///   The capability declaration the server last accepted, or
+    ///   <c>null</c> when what it holds is unknown. Same discipline as
+    ///   <see cref="_lastSentSettings"/>, and for the same reason: only a
+    ///   successful send is recorded, so a dropped push is retried by the
+    ///   next thing that recomputes.
+    /// </summary>
+    private SessionCapabilitiesDto? _lastSentCapabilities;
+
+    /// <summary>
     ///   Whether a media file is currently loaded and playable.
     ///   Used to gate resume/pause/seek/stop/screenshot capabilities.
     /// </summary>
@@ -49,11 +58,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
     {
         set
         {
-            if (_hasActivePlayback != value)
-            {
-                _hasActivePlayback = value;
-                _ = UpdateCapabilitiesOnHubAsync();
-            }
+            _hasActivePlayback = value;
+            _ = UpdateCapabilitiesOnHubAsync();
         }
     }
 
@@ -407,8 +413,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Logger.Info("MediaSession: Reconnected to session {SessionId}", result.SessionId);
 
                 // Push current capabilities — they may have changed while
-                // disconnected (e.g. playback stopped, _hasActivePlayback flipped).
-                await UpdateCapabilitiesOnHubAsync();
+                // disconnected (e.g. playback stopped, _hasActivePlayback
+                // flipped). Forced for the same reason the settings push
+                // below is: the reclaimed session holds whatever it was
+                // given before the drop, and this client no longer knows
+                // what that was.
+                await UpdateCapabilitiesOnHubAsync(force: true);
 
                 // And the settings, for the same reason and one more: a
                 // viewer who turned privacy on while this client was off
@@ -457,18 +467,19 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 DeviceType = "Companion",
                 Platform = GetPlatform(),
                 Version = version,
-                Capabilities = BuildCurrentCapabilities(),
+                Capabilities = BuildCurrentCapabilities(_hasActivePlayback),
                 Settings = BuildCurrentSettings(),
             };
 
             var result = await _connection.InvokeAsync<SessionInfoDto>(
                 "RegisterSession", deviceInfo, _lastState, _coordinator.CurrentPlaylist);
             SetSessionId(result.SessionId);
-            // Registration carried the settings, so record them as sent.
-            // Doing this only on success is what makes a failed register
-            // followed by a re-register push them again rather than
-            // conclude the server already has them.
+            // Registration carried both declarations, so record them as
+            // sent. Doing this only on success is what makes a failed
+            // register followed by a re-register push them again rather
+            // than conclude the server already has them.
             _lastSentSettings = deviceInfo.Settings;
+            _lastSentCapabilities = deviceInfo.Capabilities;
             Logger.Info("MediaSession: Registered as session {SessionId}", result.SessionId);
         }
         catch (Exception ex)
@@ -489,14 +500,29 @@ public sealed class MediaSessionClient : IAsyncDisposable
     {
         _sessionId = sessionId;
         _coordinator.MediaSessionId = sessionId;
-        // A different session holds different settings, and none at all
-        // holds none. Forgetting here is what stops a fresh registration
-        // from believing a previous session's declaration still stands.
+        // A different session holds different declarations, and none at
+        // all holds none. Forgetting here is what stops a fresh
+        // registration from believing a previous session's declarations
+        // still stand.
         _lastSentSettings = null;
+        _lastSentCapabilities = null;
     }
 
     /// <summary>
-    /// Report playback state to the hub.
+    ///   Report playback state to the hub.
+    ///
+    ///   <para>
+    ///     The capability declaration is brought up to date first, and
+    ///     that ordering is the point rather than an accident. Several of
+    ///     the flags are computed from things that move without anybody
+    ///     saving a setting — what is loaded, and
+    ///     <see cref="CompanionSettings.EffectivePrivacyMode"/>, which
+    ///     turns itself on when restricted content starts — so pinning
+    ///     the refresh to the one call that happens whenever anything
+    ///     moves at all is what keeps the declaration from going stale in
+    ///     a way no list of call sites can be trusted to cover. Unchanged
+    ///     declarations cost nothing: the push compares before it sends.
+    ///   </para>
     /// </summary>
     /// <param name="state">The current playback state to report.</param>
     public async Task ReportStateAsync(PlaybackStateUpdateDto state)
@@ -506,6 +532,8 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
             return;
+
+        await UpdateCapabilitiesOnHubAsync();
 
         try
         {
@@ -592,7 +620,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <summary>
     ///   Build current capability flags from settings + playback state.
     /// </summary>
-    private SessionCapabilitiesDto BuildCurrentCapabilities()
+    /// <param name="hasActivePlayback">
+    ///   Whether a media file is currently loaded and playable.
+    /// </param>
+    internal static SessionCapabilitiesDto BuildCurrentCapabilities(bool hasActivePlayback)
     {
         var s = SettingsProvider.Instance.Settings;
 
@@ -625,12 +656,26 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // The four transport commands. All are refused server-side
             // while the current item is private, so the gate here only
             // ever hid the button a moment earlier.
-            CanResumeOrPause = _hasActivePlayback,
-            CanSeek = _hasActivePlayback,
-            CanStop = _hasActivePlayback,
-            CanReportState = _hasActivePlayback,
-            CanCaptureScreenshot = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
-            CanScreenshotAtPosition = s.AllowRemoteScreenshot && _hasActivePlayback && !privacyOverrideScreenshot,
+            CanResumeOrPause = hasActivePlayback,
+            CanSeek = hasActivePlayback,
+            CanStop = hasActivePlayback,
+            // The one inbound capability, and the only one that is not a
+            // dispatch gate: it says this client *reports*, not that
+            // something may be done to it. So it is a property of the
+            // build and not of what is loaded, and gating it on playback
+            // was a category error with teeth — the states this companion
+            // most needs to report are `Stopped` and `Idle`, which are by
+            // definition the ones where nothing is playing. The server
+            // refuses a report from a session that declared it does not
+            // report, correctly, and the refusal left it holding the last
+            // state it had accepted: a position and a duration for an item
+            // that had stopped. Frozen, not stale — and the freeze also
+            // kept a private item's shape on the wire after the viewer
+            // stopped it. There is no switch that turns reporting off, so
+            // this is an unconditional yes.
+            CanReportState = true,
+            CanCaptureScreenshot = s.AllowRemoteScreenshot && hasActivePlayback && !privacyOverrideScreenshot,
+            CanScreenshotAtPosition = s.AllowRemoteScreenshot && hasActivePlayback && !privacyOverrideScreenshot,
             MaxVolume = PlaybackCoordinator.MaxMpvVolume,
             // Volume is guarded server-side for a private item too, which
             // is stricter than it needs to be and is not ours to relax.
@@ -668,7 +713,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // within, which is what _hasActivePlayback says; a remote
             // reading false while nothing is playing is reading the truth,
             // and the flag is re-pushed the moment playback starts.
-            CanSelectTracks = s.AllowRemotePlay && _hasActivePlayback,
+            CanSelectTracks = s.AllowRemotePlay && hasActivePlayback,
         };
     }
 
@@ -728,20 +773,42 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <summary>
     ///   Build current capability flags from settings + playback state
     ///   and push them to the hub so the dashboard reacts immediately.
+    ///
+    ///   <para>
+    ///     <b>Unchanged declarations are not sent</b>, exactly as
+    ///     <see cref="UpdateSettingsOnHubAsync"/> declines to. That is
+    ///     what lets every caller push freely — a setting saved, a state
+    ///     reported, a file loaded — without any of them having to work
+    ///     out first whether the answer actually moved. The alternative is
+    ///     a list of the places that may push, and a list is the thing
+    ///     that goes stale: a privacy toggle changed what this client
+    ///     believed it could do and told nobody, because the settings
+    ///     event was not on the list.
+    ///   </para>
     /// </summary>
-    public async Task UpdateCapabilitiesOnHubAsync()
+    /// <param name="force">
+    ///   Send even when the declaration matches the last one accepted.
+    ///   Used after a reconnect, where what the server holds is not known.
+    /// </param>
+    public async Task UpdateCapabilitiesOnHubAsync(bool force = false)
     {
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
             return;
 
-        var caps = BuildCurrentCapabilities();
+        var caps = BuildCurrentCapabilities(_hasActivePlayback);
+        if (!force && caps == _lastSentCapabilities)
+            return;
 
         try
         {
             await _connection.InvokeAsync("UpdateCapabilities", caps);
+            _lastSentCapabilities = caps;
         }
         catch (Exception ex)
         {
+            // Left unrecorded so the next recompute retries rather than
+            // comparing against a declaration that never landed.
+            _lastSentCapabilities = null;
             Logger.Debug(ex, "MediaSession: Failed to update capabilities");
         }
     }
@@ -803,11 +870,28 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
-    ///   Settings were saved. Push them if anything this session declares
-    ///   actually moved.
+    ///   Settings were saved. Push whatever this session declares, if any
+    ///   of it actually moved.
+    ///
+    ///   <para>
+    ///     <b>Both declarations, not only the settings one.</b> Half the
+    ///     capability flags are computed from settings — the four
+    ///     <c>AllowRemote…</c> switches, the handoff switch, and the
+    ///     screenshot pair, which privacy still gates — so a save that
+    ///     pushed only <c>SessionSettings</c> left the server holding
+    ///     capabilities the client had already stopped believing. Toggling
+    ///     privacy was the sharp case: it changes what this client says it
+    ///     can do and used to reach the server on neither event, since the
+    ///     capability push hung off registration, the settings window,
+    ///     reconnect and the loaded-file flag, and privacy is raised by
+    ///     none of those.
+    ///   </para>
     /// </summary>
     private void OnSettingsChanged(CompanionSettings settings)
-        => _ = UpdateSettingsOnHubAsync();
+    {
+        _ = UpdateSettingsOnHubAsync();
+        _ = UpdateCapabilitiesOnHubAsync();
+    }
 
     /// <summary>
     /// Get the current platform string for device registration.
@@ -899,7 +983,18 @@ public sealed class MediaSessionClient : IAsyncDisposable
         public bool DisablePlaybackEventSyncing { get; init; }
     }
 
-    private sealed class SessionCapabilitiesDto
+    /// <summary>
+    ///   What this session is able to do, mirroring the plugin's
+    ///   <c>SessionCapabilities</c>.
+    ///
+    ///   <para>
+    ///     A record, like its settings neighbour and for the same reason:
+    ///     the only question ever asked of two of these is whether they
+    ///     differ — see <see cref="UpdateCapabilitiesOnHubAsync"/>, which
+    ///     declines to push an unchanged declaration.
+    ///   </para>
+    /// </summary>
+    internal sealed record SessionCapabilitiesDto
     {
         [JsonProperty("CanPlay")]
         public bool CanPlay { get; init; } = true;

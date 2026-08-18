@@ -239,6 +239,36 @@ now" is a state.
 in full whatever privacy says; filtering happens where the server speaks
 to somebody other than this session. That is what keeps the playlist,
 handoff and track selection working for the session's own viewer.
+
+### `CanReportState` is the one inbound capability, and it is always true
+
+Every other flag is a dispatch gate — what may be done *to* this session.
+`CanReportState` says this client *reports*, so it is a property of the
+build and not of what is loaded. It was gated on the loaded-file flag,
+which denied exactly the two reports that matter most: `Stopped` and
+`Idle` are by definition the states where nothing is playing. The plugin
+refuses a report from a session that declared it does not report, so the
+session was not corrected but **frozen** at the last state the server had
+accepted — a position and a duration for an item that had stopped, which
+under privacy leaves the *shape* of what was watched on the wire after the
+viewer stopped it. There is no switch that turns reporting off; this is an
+unconditional yes.
+
+### Both declarations are pushed from one event, and neither is pushed twice
+
+`UpdateCapabilitiesOnHubAsync` and `UpdateSettingsOnHubAsync` each compare
+against the last declaration the server accepted and send nothing when it
+has not moved, so callers push freely rather than each working out first
+whether the answer changed. Both DTOs are records for that comparison.
+Capabilities are refreshed from `SettingsChanged` — half the flags are
+computed from settings, and privacy is raised by that event and by no
+other one the push used to hang off — and from `ReportStateAsync`, which
+catches the inputs no save touches: what is loaded, and
+`EffectivePrivacyMode` turning itself on for restricted content. Both are
+forced after a reconnect, where what the reclaimed session holds is not
+known. The settings window no longer pushes capabilities itself; being one
+of four places that remembered to is what let a tray or mpv privacy toggle
+change the client's mind without telling the server.
 - `ScreenshotSubtitleBehavior` — subtitle visibility on screenshot: `Disabled` / `OnlyWhenPaused` (default) / `Always`
 - `MediaSessionEnabled` — global enabled switch for Media Session API integration
 - `MediaSessionAutoConnectId` — Guid of the connection to auto-connect for Media Session API (null = none)

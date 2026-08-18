@@ -465,13 +465,12 @@ public partial class MainWindow : Window
         else
             s.MediaSessionAutoConnectId = null;
 
+        // Saving raises SettingsChanged, which the media session client
+        // subscribes to and pushes both its declarations from. This window
+        // used to push the capabilities itself, which made it one of the
+        // four places that remembered to — and privacy, toggled from the
+        // tray or an mpv keybinding, was not one of them.
         SettingsProvider.Instance.Save();
-
-        // Push updated capabilities to the hub after saving
-        if (Avalonia.Application.Current is App app && app.MediaSessionClient is not null)
-        {
-            _ = app.MediaSessionClient.UpdateCapabilitiesOnHubAsync();
-        }
     }
 
     private void OnVolumeSliderChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
