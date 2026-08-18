@@ -620,12 +620,20 @@ public sealed class MediaSessionClient : IAsyncDisposable
         {
             await Task.Delay(StoppedToIdleDelay, ct);
             Logger.Trace("MediaSession: Stopped→Idle timer fired — reporting Idle");
+            // The four device properties are read from the coordinator the
+            // way the other report call sites do. Leaving them unset does
+            // not omit them: the hub protocol writes them as explicit
+            // nulls, and the server reads a null as "the device has none".
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
                 State = PlaybackState.Idle.ToWireName(),
                 Position = TimeSpan.Zero,
                 Duration = null,
                 IsPaused = false,
+                Volume = _coordinator.CurrentVolume,
+                IsMuted = _coordinator.CurrentMuted,
+                PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
+                IsFullscreen = _coordinator.CurrentFullscreen,
             });
         }
         catch (OperationCanceledException)
