@@ -1,4 +1,5 @@
 using Shoko.Companion.Configuration;
+using Shoko.Companion.Playback;
 using Shoko.Companion.Server;
 using Xunit;
 
@@ -45,12 +46,17 @@ public class SessionCapabilityDeclarationTests
     ///   which are the states where by definition nothing is playing.
     /// </summary>
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void ReportsState_WhetherOrNotAnythingIsPlaying(bool hasActivePlayback)
+    [InlineData(PlaybackState.Idle)]
+    [InlineData(PlaybackState.Loading)]
+    [InlineData(PlaybackState.Playing)]
+    [InlineData(PlaybackState.Paused)]
+    [InlineData(PlaybackState.Buffering)]
+    [InlineData(PlaybackState.Stopped)]
+    [InlineData(PlaybackState.Error)]
+    public void ReportsState_WhateverIsPlaying(PlaybackState state)
     {
         Assert.True(
-            MediaSessionClient.BuildCurrentCapabilities(hasActivePlayback).CanReportState);
+            MediaSessionClient.BuildCurrentCapabilities(state).CanReportState);
     }
 
     /// <summary>
@@ -66,8 +72,8 @@ public class SessionCapabilityDeclarationTests
         s.PrivacyMode = true;
         s.PrivacyModeDisableRemoteScreenshots = true;
 
-        Assert.True(MediaSessionClient.BuildCurrentCapabilities(false).CanReportState);
-        Assert.True(MediaSessionClient.BuildCurrentCapabilities(true).CanReportState);
+        Assert.True(MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Idle).CanReportState);
+        Assert.True(MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing).CanReportState);
     }
 
     /// <summary>
@@ -80,14 +86,14 @@ public class SessionCapabilityDeclarationTests
     public void PrivacyMode_Moves_TheScreenshotCapabilities()
     {
         var s = SettingsProvider.Instance.Settings;
-        var before = MediaSessionClient.BuildCurrentCapabilities(true);
+        var before = MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing);
         Assert.True(before.CanCaptureScreenshot);
         Assert.True(before.CanScreenshotAtPosition);
 
         s.PrivacyMode = true;
         s.PrivacyModeDisableRemoteScreenshots = true;
 
-        var after = MediaSessionClient.BuildCurrentCapabilities(true);
+        var after = MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing);
         Assert.False(after.CanCaptureScreenshot);
         Assert.False(after.CanScreenshotAtPosition);
         Assert.NotEqual(before, after);
@@ -102,10 +108,76 @@ public class SessionCapabilityDeclarationTests
     public void UnchangedDeclarations_CompareEqual()
     {
         Assert.Equal(
-            MediaSessionClient.BuildCurrentCapabilities(true),
-            MediaSessionClient.BuildCurrentCapabilities(true));
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing),
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing));
         Assert.NotEqual(
-            MediaSessionClient.BuildCurrentCapabilities(true),
-            MediaSessionClient.BuildCurrentCapabilities(false));
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing),
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Idle));
+    }
+
+    /// <summary>
+    ///   A stall is not idleness. The media is loaded, the position is
+    ///   real and the last frame is still on screen — only the cache ran
+    ///   dry — so every ability that holds while playing holds here too.
+    ///   Declaring otherwise made a session go deaf on a slow link at
+    ///   exactly the moment somebody reached for the remote.
+    /// </summary>
+    [Fact]
+    public void Buffering_DeclaresEverything_Playing_Does()
+    {
+        Assert.Equal(
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing),
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Buffering));
+    }
+
+    /// <summary>
+    ///   Preparing is the other half of the old <c>Loading</c> and it
+    ///   goes the other way. Pre-processing a file — building the frame
+    ///   index, resolving the source — has produced nothing to act on
+    ///   yet, so seeking and capturing a frame stay false rather than
+    ///   becoming promises this client cannot keep.
+    /// </summary>
+    [Fact]
+    public void Preparing_DeclaresNoTransport_BecauseNothingIsPlayableYet()
+    {
+        var preparing = MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Loading);
+
+        Assert.False(preparing.CanSeek);
+        Assert.False(preparing.CanResumeOrPause);
+        Assert.False(preparing.CanCaptureScreenshot);
+        Assert.False(preparing.CanScreenshotAtPosition);
+        Assert.False(preparing.CanSelectTracks);
+    }
+
+    /// <summary>
+    ///   Stopping is the exception, and the reason it is gated on its own
+    ///   condition rather than sharing one with the rest.
+    ///
+    ///   <para>
+    ///     It is control of the session's attention, not of playback: a
+    ///     file still being pre-processed cannot be sought, but it can be
+    ///     abandoned, and a viewer who started the wrong one should not
+    ///     have to wait out a frame-index build to say so. Idle is still
+    ///     false — there is nothing there to abandon.
+    ///   </para>
+    /// </summary>
+    [Theory]
+    [InlineData(PlaybackState.Loading, true)]
+    [InlineData(PlaybackState.Playing, true)]
+    [InlineData(PlaybackState.Paused, true)]
+    [InlineData(PlaybackState.Buffering, true)]
+    [InlineData(PlaybackState.Idle, false)]
+    [InlineData(PlaybackState.Stopped, false)]
+    [InlineData(PlaybackState.Error, false)]
+    public void CanStop_IsGated_MoreLoosely_ThanTheRest(PlaybackState state, bool expected)
+    {
+        var declared = MediaSessionClient.BuildCurrentCapabilities(state);
+
+        Assert.Equal(expected, declared.CanStop);
+
+        // And the loosening is CanStop's alone: the seam only exists
+        // where the two conditions actually differ.
+        if (state is PlaybackState.Loading)
+            Assert.False(declared.CanSeek);
     }
 }

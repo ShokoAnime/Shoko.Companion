@@ -467,6 +467,7 @@ public partial class App : Application
             PlaybackState.Idle => "Shoko Companion",
             PlaybackState.Loading => "Loading...",
             PlaybackState.Playing => $"Playing",
+            PlaybackState.Buffering => "Buffering...",
             PlaybackState.Paused => "Paused",
             PlaybackState.Stopped => "Shoko Companion",
             PlaybackState.Error => "Error",
@@ -484,23 +485,15 @@ public partial class App : Application
         if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
-        // Update live capabilities based on playback state
-        MediaSessionClient.HasActivePlayback = args.NewState
-            is PlaybackState.Playing or PlaybackState.Paused;
+        // Update live capabilities based on playback state. The state
+        // goes across whole rather than a flag computed from it: what
+        // each capability makes of it is the declaration's business, and
+        // they no longer all read it the same way.
+        MediaSessionClient.CurrentPlaybackState = args.NewState;
 
-        var state = args.NewState switch
-        {
-            PlaybackState.Playing => "Playing",
-            PlaybackState.Paused => "Paused",
-            PlaybackState.Idle => "Idle",
-            PlaybackState.Stopped => "Stopped",
-            PlaybackState.Loading => "Loading",
-            PlaybackState.Error => "Error",
-            _ => "Idle",
-        };
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
-            State = state,
+            State = args.NewState.ToWireName(),
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,
@@ -522,25 +515,15 @@ public partial class App : Application
         if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
-        var state = _coordinator.CurrentState switch
-        {
-            PlaybackState.Playing => "Playing",
-            PlaybackState.Paused => "Paused",
-            PlaybackState.Idle => "Idle",
-            PlaybackState.Stopped => "Stopped",
-            PlaybackState.Loading => "Loading",
-            PlaybackState.Error => "Error",
-            _ => "Idle",
-        };
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
-            State = state,
+            State = _coordinator.CurrentState.ToWireName(),
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,
             Position = position,
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            IsPaused = state is "Paused",
+            IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
@@ -554,25 +537,15 @@ public partial class App : Application
         if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
-        var state = _coordinator.CurrentState switch
-        {
-            PlaybackState.Playing => "Playing",
-            PlaybackState.Paused => "Paused",
-            PlaybackState.Idle => "Idle",
-            PlaybackState.Stopped => "Stopped",
-            PlaybackState.Loading => "Loading",
-            PlaybackState.Error => "Error",
-            _ => "Idle",
-        };
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
-            State = state,
+            State = _coordinator.CurrentState.ToWireName(),
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            IsPaused = state is "Paused",
+            IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
@@ -586,25 +559,15 @@ public partial class App : Application
         if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
 
-        var state = _coordinator.CurrentState switch
-        {
-            PlaybackState.Playing => "Playing",
-            PlaybackState.Paused => "Paused",
-            PlaybackState.Idle => "Idle",
-            PlaybackState.Stopped => "Stopped",
-            PlaybackState.Loading => "Loading",
-            PlaybackState.Error => "Error",
-            _ => "Idle",
-        };
         _ = MediaSessionClient.ReportStateAsync(new PlaybackStateUpdateDto
         {
-            State = state,
+            State = _coordinator.CurrentState.ToWireName(),
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,
             Position = TimeSpan.FromSeconds(_coordinator.CurrentPositionSeconds),
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
-            IsPaused = state is "Paused",
+            IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
             IsMuted = _coordinator.CurrentMuted,
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
@@ -644,19 +607,9 @@ public partial class App : Application
         if (_coordinator is null)
             return null;
 
-        var state = _coordinator.CurrentState switch
-        {
-            PlaybackState.Playing => "Playing",
-            PlaybackState.Paused => "Paused",
-            PlaybackState.Idle => "Idle",
-            PlaybackState.Stopped => "Stopped",
-            PlaybackState.Loading => "Loading",
-            PlaybackState.Error => "Error",
-            _ => "Idle",
-        };
         return new PlaybackStateUpdateDto
         {
-            State = state,
+            State = _coordinator.CurrentState.ToWireName(),
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,

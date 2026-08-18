@@ -32,7 +32,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private PlaybackStateUpdateDto? _lastState;
     private CancellationTokenSource? _stoppedTimerCts;
     private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(10);
-    private bool _hasActivePlayback;
+    private PlaybackState _playbackState;
 
     /// <summary>
     ///   The settings declaration the server last accepted, or <c>null</c>
@@ -51,14 +51,24 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private SessionCapabilitiesDto? _lastSentCapabilities;
 
     /// <summary>
-    ///   Whether a media file is currently loaded and playable.
-    ///   Used to gate resume/pause/seek/stop/screenshot capabilities.
+    ///   The session's current playback state, which is what every
+    ///   playback-dependent capability is declared from.
+    ///
+    ///   <para>
+    ///     The state itself rather than a "has active playback" flag,
+    ///     because the flags no longer answer one question: stopping is
+    ///     allowed while a file is being prepared and seeking is not.
+    ///     Handing in the state keeps both readings in
+    ///     <see cref="BuildCurrentCapabilities"/>, where adding a state
+    ///     means facing both at once instead of remembering a second
+    ///     boolean at every assignment.
+    ///   </para>
     /// </summary>
-    public bool HasActivePlayback
+    public PlaybackState CurrentPlaybackState
     {
         set
         {
-            _hasActivePlayback = value;
+            _playbackState = value;
             _ = UpdateCapabilitiesOnHubAsync();
         }
     }
@@ -102,7 +112,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         _deviceName = deviceName;
         _coordinator = coordinator;
         _lastState = initialState;
-        _hasActivePlayback = initialState?.State is "Playing" or "Paused";
+        _playbackState = PlaybackStateWire.FromWireName(initialState?.State);
 
         // Every path that changes a setting ends in Save(), which raises
         // this — the settings window, the tray, the mpv privacy keybinding
@@ -413,7 +423,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Logger.Info("MediaSession: Reconnected to session {SessionId}", result.SessionId);
 
                 // Push current capabilities — they may have changed while
-                // disconnected (e.g. playback stopped, _hasActivePlayback
+                // disconnected (e.g. playback stopped, _playbackState
                 // flipped). Forced for the same reason the settings push
                 // below is: the reclaimed session holds whatever it was
                 // given before the drop, and this client no longer knows
@@ -430,7 +440,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
                 // Restart stopped→idle timer if we reconnected while stopped,
                 // otherwise the hub would see "Stopped" indefinitely.
-                if (_lastState?.State == "Stopped")
+                if (_lastState?.State == PlaybackState.Stopped.ToWireName())
                     StartStoppedTimer();
 
                 return;
@@ -444,7 +454,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         await RegisterSessionAsync();
 
         // Same restart for the fresh-registration path
-        if (_lastState?.State == "Stopped")
+        if (_lastState?.State == PlaybackState.Stopped.ToWireName())
             StartStoppedTimer();
     }
 
@@ -464,10 +474,17 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Name = _deviceName,
                 ClientName = "Shoko Desktop Companion",
                 HostName = Environment.MachineName,
-                DeviceType = "Companion",
+                // Lowercase, like the state names and for the same
+                // reason: this is a server enum too, and the only
+                // spelling both JSON stacks accept is the contract's own.
+                // "Companion" survived on Newtonsoft's case-insensitive
+                // matching alone — under System.Text.Json it does not
+                // bind, and a registration that does not bind is not a
+                // degraded session but no session at all.
+                DeviceType = "companion",
                 Platform = GetPlatform(),
                 Version = version,
-                Capabilities = BuildCurrentCapabilities(_hasActivePlayback),
+                Capabilities = BuildCurrentCapabilities(_playbackState),
                 Settings = BuildCurrentSettings(),
             };
 
@@ -546,7 +563,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         // If playback just stopped, schedule an auto-transition to Idle
         // after a grace period. Any new play/pause/resume cancels it.
-        if (state.State == "Stopped")
+        if (state.State == PlaybackState.Stopped.ToWireName())
             StartStoppedTimer();
     }
 
@@ -605,7 +622,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             Logger.Trace("MediaSession: Stopped→Idle timer fired — reporting Idle");
             await ReportStateAsync(new PlaybackStateUpdateDto
             {
-                State = "Idle",
+                State = PlaybackState.Idle.ToWireName(),
                 Position = TimeSpan.Zero,
                 Duration = null,
                 IsPaused = false,
@@ -619,13 +636,24 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
     /// <summary>
     ///   Build current capability flags from settings + playback state.
+    ///
+    ///   <para>
+    ///     Takes the state rather than a pre-computed boolean because two
+    ///     different conditions are drawn from it and they no longer
+    ///     agree: everything transport-shaped needs something playable
+    ///     loaded, while <c>CanStop</c> also holds while the file is
+    ///     still being prepared. Two booleans handed in from the caller
+    ///     would be two things a new state has to remember to move; one
+    ///     state in, both conditions derived here, is one place to look.
+    ///   </para>
     /// </summary>
-    /// <param name="hasActivePlayback">
-    ///   Whether a media file is currently loaded and playable.
+    /// <param name="state">
+    ///   The session's current playback state.
     /// </param>
-    internal static SessionCapabilitiesDto BuildCurrentCapabilities(bool hasActivePlayback)
+    internal static SessionCapabilitiesDto BuildCurrentCapabilities(PlaybackState state)
     {
         var s = SettingsProvider.Instance.Settings;
+        var hasActivePlayback = state.HasActivePlayback();
 
         // Privacy does not appear below any more, and that is a change in
         // what this client *declares* rather than only in what it hides.
@@ -658,7 +686,13 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // ever hid the button a moment earlier.
             CanResumeOrPause = hasActivePlayback,
             CanSeek = hasActivePlayback,
-            CanStop = hasActivePlayback,
+            // Gated more loosely than the other three, and deliberately.
+            // Stopping is control of the session's attention rather than
+            // of playback: a file still being pre-processed has no frame
+            // to seek in or capture, but it can be abandoned, and the
+            // moment somebody most wants to abandon a load is while they
+            // are waiting for it.
+            CanStop = state.CanAbandonPlayback(),
             // The one inbound capability, and the only one that is not a
             // dispatch gate: it says this client *reports*, not that
             // something may be done to it. So it is a property of the
@@ -700,7 +734,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // say-so, so it rides on the remote-play setting as well as its
             // own switch: turning remote play off must not leave a back
             // door that starts a video here anyway. Deliberately not gated
-            // on _hasActivePlayback — the usual reason to hand a video to
+            // on the playback state — the usual reason to hand a video to
             // this device is that it is sitting idle. And no longer gated
             // on privacy: privacy crosses a handoff on the *item*, which
             // arrives already marked private, so a viewer in privacy mode
@@ -710,7 +744,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // mpv switches a track in place - it costs a decoder reset and
             // nothing else - so this is a plain yes wherever remote control
             // is allowed at all. It needs something loaded to switch
-            // within, which is what _hasActivePlayback says; a remote
+            // within, which is what an active playback state says; a remote
             // reading false while nothing is playing is reading the truth,
             // and the flag is re-pushed the moment playback starts.
             CanSelectTracks = s.AllowRemotePlay && hasActivePlayback,
@@ -795,7 +829,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
             return;
 
-        var caps = BuildCurrentCapabilities(_hasActivePlayback);
+        var caps = BuildCurrentCapabilities(_playbackState);
         if (!force && caps == _lastSentCapabilities)
             return;
 
@@ -1107,10 +1141,12 @@ public sealed class PlaybackRequestDto
 public sealed class PlaybackStateUpdateDto
 {
     /// <summary>
-    /// The playback state string (Playing, Paused, Idle, Stopped, Loading, Error).
+    ///   The playback state, spelled as the server's wire name — see
+    ///   <see cref="PlaybackStateWire.ToWireName"/>, which is the only
+    ///   thing that should ever fill this in.
     /// </summary>
     [JsonProperty("State")]
-    public string State { get; init; } = "Idle";
+    public string State { get; init; } = "idle";
 
     /// <summary>
     /// The currently playing media item, or null if none.

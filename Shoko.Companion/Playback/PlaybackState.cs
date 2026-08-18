@@ -33,5 +33,20 @@ public enum PlaybackState
     /// <summary>
     /// An error occurred during playback.
     /// </summary>
-    Error
+    Error,
+
+    /// <summary>
+    /// Playback has started and stalled waiting for data. The file is
+    /// loaded, the position is real and a frame is on screen — only the
+    /// cache ran dry, which is what separates this from
+    /// <see cref="Loading"/>, where nothing exists to show yet.
+    ///
+    /// <para>
+    ///   Read from mpv's <c>paused-for-cache</c>, which is a stall the
+    ///   viewer did not ask for and is reported independently of
+    ///   <c>pause</c>. Appended rather than slotted next to
+    ///   <see cref="Playing"/> so the existing ordinals do not move.
+    /// </para>
+    /// </summary>
+    Buffering
 }

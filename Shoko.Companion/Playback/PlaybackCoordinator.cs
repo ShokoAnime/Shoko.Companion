@@ -41,6 +41,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private const string MpvPropFullscreen = "fullscreen";
     private const string MpvPropPlaylist = "playlist";
 
+    // mpv's own name for "playback is running but the cache ran dry".
+    // Distinct from "pause", which is the viewer's decision, and from
+    // "core-idle", which is also true for a plain pause and for the gap
+    // between files - neither of which is a stall.
+    private const string MpvPropPausedForCache = "paused-for-cache";
+
     // ── Max volume ──────────────────────────────────────────────────────
     /// <summary>
     ///   The maximum supported volume level (percent). Referenced by the
@@ -151,6 +157,19 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private bool _pendingSeek;
 
     private bool _skipPositionEvents;
+
+    // The last value of mpv's "pause" property, which is the pause the
+    // viewer asked for. Kept because a cache stall does not touch it: mpv
+    // reports "paused-for-cache" separately and leaves "pause" alone, so
+    // when the stall clears this is the only thing that knows whether to
+    // go back to Playing or to Paused.
+    private bool _userPaused;
+
+    // Whether mpv is currently stalled on its cache. Tracked rather than
+    // read back from the state, because a stall that starts while the
+    // viewer is paused must still be remembered - it becomes visible the
+    // moment they resume.
+    private bool _pausedForCache;
 
     // Cached mpv playlist state (observed "playlist" property) — the ground
     // truth for the current queue position, including user navigation. Used to
@@ -307,7 +326,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// </summary>
     public async Task PlayAsync(string shokoUrl, TimeSpan? startPosition = null, bool? append = null)
     {
-        if (_state is PlaybackState.Playing or PlaybackState.Paused)
+        if (_state.HasActivePlayback())
         {
             var action = append.HasValue
                 ? (append.Value ? OnNewUrlBehavior.Append : OnNewUrlBehavior.Replace)
@@ -563,6 +582,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         // reported to the media session and persisted as
         // LastVideoStreamIndex, and until now nothing ever filled it in.
         await _mpv.ObservePropertyAsync(13, MpvPropVid);
+        // The buffering signal. Without it a stall is invisible to the
+        // hub: mpv leaves "pause" alone while the cache refills, so the
+        // session sat in Playing with a frozen position and no way for a
+        // remote to tell a stall from a stuck client.
+        await _mpv.ObservePropertyAsync(14, MpvPropPausedForCache);
 
         // Set up mpv keybindings
         var privacyKey = SettingsProvider.Instance.Settings.PrivacyModeMpvKeybinding;
@@ -728,6 +752,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         CheckRestrictedPrivacyTransition();
 
         _sessionVideoId = null;
+        _userPaused = false;
+        _pausedForCache = false;
         await _mpv.StopAsync();
 
         ResetDiscordPresence();
@@ -747,7 +773,9 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// </summary>
     public async Task PauseAsync()
     {
-        if (_state != PlaybackState.Playing) return;
+        // Buffering counts: the viewer is watching a stalled video and
+        // pausing it is exactly what they would do about that.
+        if (_state is not (PlaybackState.Playing or PlaybackState.Buffering)) return;
         await _mpv.SetPropertyAsync(MpvPropPause, true);
     }
 
@@ -835,7 +863,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// <inheritdoc/>
     public async Task SeekAsync(TimeSpan position)
     {
-        if (_state != PlaybackState.Playing && _state != PlaybackState.Paused)
+        if (!_state.HasActivePlayback())
             return;
 
         Logger.Info("Seeking to {Position}", position);
@@ -1197,7 +1225,9 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             return await CaptureScreenshotAtPositionAsync(position.Value);
 
         // Current-frame screenshot from the main mpv instance
-        if (_state is not (PlaybackState.Playing or PlaybackState.Paused))
+        // A stall does not clear the screen - the last decoded frame is
+        // still up, and it is the frame the viewer is looking at.
+        if (!_state.HasActivePlayback())
             return null;
 
         return await CaptureScreenshotToFileAsync(_mpv, _state);
@@ -1380,6 +1410,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             case MpvPropPause:
                 var isPaused = args.Data is true;
+                _userPaused = isPaused;
                 if (isPaused && PendingPlaylistEntries is 0
                     && (_sessionManager.HasReachedEof
                         || (_duration > 0 && _sessionManager.CurrentPositionMs > 0
@@ -1393,11 +1424,21 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 {
                     _sessionManager.OnPauseChanged(isPaused);
                     if (_sessionManager.HasActiveSession
-                        || _state is PlaybackState.Playing or PlaybackState.Paused)
+                        || _state.HasActivePlayback())
                     {
-                        SetState(isPaused ? PlaybackState.Paused : PlaybackState.Playing);
+                        SetState(ResolvePlayingState());
                     }
                 }
+                break;
+
+            case MpvPropPausedForCache:
+                // A stall the viewer did not ask for. Only meaningful
+                // once something is loaded: mpv reports the property
+                // before the first frame too, and that window is the
+                // load, which is already reported as its own state.
+                _pausedForCache = args.Data is true;
+                if (_state.HasActivePlayback())
+                    SetState(ResolvePlayingState());
                 break;
 
             case MpvPropPath:
@@ -1411,7 +1452,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 break;
 
             case MpvPropIdleActive:
-                if (args.Data is true && _state is PlaybackState.Playing or PlaybackState.Paused)
+                if (args.Data is true && _state.HasActivePlayback())
                 {
                     Logger.Info("mpv is now idle — playback finished, closing player");
                     _ = StopAsync();
@@ -2037,7 +2078,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         PlaylistChanged?.Invoke(this, EventArgs.Empty);
         VolumeStateChanged?.Invoke(this, EventArgs.Empty);
         ViewStateChanged?.Invoke(this, EventArgs.Empty);
-        if (_state is PlaybackState.Playing or PlaybackState.Paused or PlaybackState.Loading)
+        if (_state.HasActivePlayback() || _state is PlaybackState.Loading)
         {
             await StopAsync();
         }
@@ -2243,13 +2284,30 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    ///   Which of the three loaded-and-playable states mpv is actually
+    ///   in, from the two properties that say so independently.
+    ///
+    ///   <para>
+    ///     A pause the viewer asked for outranks a cache stall, because
+    ///     that is what they see: paused video, and the stall behind it
+    ///     is invisible and costs them nothing until they resume. The
+    ///     reverse order would report Buffering to every remote for a
+    ///     video sitting deliberately paused on a slow link.
+    ///   </para>
+    /// </summary>
+    private PlaybackState ResolvePlayingState()
+        => _userPaused ? PlaybackState.Paused
+            : _pausedForCache ? PlaybackState.Buffering
+            : PlaybackState.Playing;
+
     private void SetState(PlaybackState newState, string? errorMessage = null)
     {
         var old = _state;
         if (old == newState) return;
         _state = newState;
         StateChanged?.Invoke(this, new PlaybackStateChangedEventArgs(old, newState, errorMessage,
-            newState is PlaybackState.Playing or PlaybackState.Paused ? "Playing" : null));
+            newState.HasActivePlayback() ? "Playing" : null));
     }
 
     private static string? ExtractQueryParam(string url, string paramName)

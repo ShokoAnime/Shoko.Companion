@@ -254,6 +254,47 @@ under privacy leaves the *shape* of what was watched on the wire after the
 viewer stopped it. There is no switch that turns reporting off; this is an
 unconditional yes.
 
+### State names are the server's, lowercase, in exactly one place
+
+`PlaybackStateWire.ToWireName` is the only thing that spells a state for
+the hub. The `State` field is a string here and an enum there, so nothing
+in either build type-checks it: the server's `Loading` was split into
+`preparing` and `buffering`, this client kept sending `"Loading"`, and
+for thirteen days **every load report failed argument binding at the hub**
+— the method never ran, the server kept the state it already held, and
+the only trace was a `Logger.Debug` line here. Five copies of the same
+switch statement is what let one wrong name sit in four of them.
+
+The names are lowercase because that is what the contract declares on the
+enum, and it is the only spelling both JSON stacks accept. The Shoko host
+registers `AddNewtonsoftJsonProtocol`, which wins the `json` protocol
+whichever order the registrations happen in, and Newtonsoft matches
+case-insensitively — which is the only reason `"Playing"` ever worked.
+System.Text.Json, the protocol the plugin's own `AddSignalR()` would
+supply, matches exactly and refuses every capitalised name. `DeviceType`
+was the same shape of bug waiting to happen and is now `"companion"` too.
+`PlaybackStateWireTests` pins the whole vocabulary and round-trips it
+through both serialisers.
+
+### `CanStop` is gated differently from every other transport flag
+
+`Playing`, `Paused` and `Buffering` are the loaded-and-playable states,
+and everything transport-shaped reads them. A stall is not idleness: the
+media is fine, the position is real and the last frame is still up, only
+the cache ran dry — so a session that went deaf whenever `paused-for-cache`
+went true was deaf at the moment somebody reached for the remote.
+`Preparing` is the opposite and stays out: pre-processing a file to build
+the frame index has produced nothing to seek in or capture, and declaring
+otherwise is a promise this client cannot keep.
+
+`CanStop` also holds while preparing, because stopping is control of the
+session's *attention* rather than of playback. A viewer who started the
+wrong file should not have to wait out a frame-index build to say so.
+
+Both conditions are derived inside `BuildCurrentCapabilities`, from the
+state itself rather than from booleans the caller computed — two flags
+handed in would be two things every future state has to remember to move.
+
 ### Both declarations are pushed from one event, and neither is pushed twice
 
 `UpdateCapabilitiesOnHubAsync` and `UpdateSettingsOnHubAsync` each compare

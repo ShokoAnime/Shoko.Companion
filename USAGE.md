@@ -133,7 +133,7 @@ Right-click (Windows/Linux) or click (macOS) the tray icon:
 | — | |
 | **Exit** | Sends a final stop event and quits |
 
-The tray tooltip reflects the current playback state: "Shoko Companion" when idle or stopped, "Loading...", "Playing", "Paused", or "Error".
+The tray tooltip reflects the current playback state: "Shoko Companion" when idle or stopped, "Loading...", "Playing", "Buffering...", "Paused", or "Error".
 
 ## 7. Discord Rich Presence
 
