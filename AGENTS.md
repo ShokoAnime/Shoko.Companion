@@ -26,6 +26,28 @@ Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits
 - **Single-file publish** with native libs self-extract: `dotnet publish -c Release -r <rid>`
 - **Test project** references internals via `[InternalsVisibleTo]`
 
+## CI
+
+Two hosts, and they do not build the same set of artefacts.
+
+- `.gitea/workflows/` — `build.yml` on every push to `dev`, cutting a
+  `v<x.y.z>-dev.<n>` prerelease; `release.yml` on a published `v*`
+  release. Both run `scripts/package.sh`, which is the same command a
+  human runs locally.
+- `.github/workflows/` — unchanged, and still the only place the
+  **Windows installer** and the **macOS .dmg** are built. `iscc`,
+  `codesign` and `hdiutil` each need their own operating system, and the
+  Gitea runner has only Linux.
+
+So a Gitea build ships AppImages for both Linux RIDs and plain archives
+for `win-x64` and `osx-arm64`. That is a deliberate degradation, not an
+oversight: an unsigned `.app` assembled on Linux would be worse than no
+`.dmg` at all on Apple Silicon.
+
+`scripts/gitea-release-asset.sh` uploads assets over Gitea's API rather
+than through an action, so it is dry-runnable (`--dry-run`) and needs
+nothing from the runner.
+
 ## Architecture
 
 ### Entry Flow

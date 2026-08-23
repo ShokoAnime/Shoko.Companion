@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  release:
+    types: [ published ]
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: http.version
+  GIT_CONFIG_VALUE_0: HTTP/1.1
+
+jobs:
+  publish:
+    name: Publish the release assets
+    if: ${{ startsWith(github.event.release.tag_name, 'v') && !contains(github.event.release.tag_name, '-dev.') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Check the toolchain
+        run: |
+          missing=""
+          for tool in dotnet git zip tar wget curl jq sha256sum; do
+            command -v "$tool" >/dev/null 2>&1 || missing="${missing} ${tool}"
+          done
+          if [ -n "${missing}" ]; then
+            echo "runner image is missing:${missing}" >&2
+            exit 1
+          fi
+          dotnet --version
+
+      - name: Test
+        run: dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj -c Release
+
+      - name: Check the tag against the csproj
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          declared="$(grep -oP '^\s*<Version>\K[^<]+' Shoko.Companion/Shoko.Companion.csproj | head -1)"
+          if [ "${version}" != "${declared}" ]; then
+            echo "tag says ${version}, csproj says ${declared}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish and package
+        run: scripts/package.sh "${{ steps.version.outputs.version }}"
+
+      - name: Upload the assets
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: scripts/gitea-release-asset.sh --tag "${{ github.event.release.tag_name }}" dist/*

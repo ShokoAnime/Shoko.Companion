@@ -2,6 +2,14 @@
 [Bb]in/
 [Oo]bj/
 [Pp]ublish/
+dist/
+
+# Packaging leaves these in the working directory before scripts/package.sh
+# moves them into dist/, so an interrupted run does not stage an installer
+shoko-companion*.AppImage
+shoko-companion*.dmg
+shoko-companion*.Installer.exe
+Shoko Companion.app/
 *.user
 *.suo
 *.userprefs

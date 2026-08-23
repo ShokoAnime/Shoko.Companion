@@ -1,0 +1,128 @@
+name: Build
+
+on:
+  push:
+    branches: [ dev ]
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: http.version
+  GIT_CONFIG_VALUE_0: HTTP/1.1
+
+jobs:
+  dev:
+    name: Build, test and cut a dev build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Check the toolchain
+        run: |
+          missing=""
+          for tool in dotnet git zip tar wget curl jq sha256sum; do
+            command -v "$tool" >/dev/null 2>&1 || missing="${missing} ${tool}"
+          done
+          if [ -n "${missing}" ]; then
+            echo "runner image is missing:${missing}" >&2
+            exit 1
+          fi
+          dotnet --version
+
+      - name: Test
+        run: dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj -c Release
+
+      - name: Read the milestone version
+        id: milestone
+        run: |
+          version="$(grep -oP '^\s*<Version>\K[^<]+' Shoko.Companion/Shoko.Companion.csproj | head -1)"
+          case "${version}" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "csproj <Version> is '${version}', which is not x.y.z" >&2; exit 1 ;;
+          esac
+          if [ -n "$(git tag -l 'v*')" ]; then any_tag=true; else any_tag=false; fi
+          {
+            echo "version=${version}"
+            echo "any_tag=${any_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find the previous tag
+        id: previous
+        uses: revam/gh-action-get-tag-and-version@v3
+        with:
+          use_semver: true
+          prefix: v
+          suffix: dev
+          fallback_version: ${{ steps.milestone.outputs.version }}
+
+      - name: Decide the increment
+        id: decide
+        env:
+          ANY_TAG: ${{ steps.milestone.outputs.any_tag }}
+          MILESTONE: ${{ steps.milestone.outputs.version }}
+          PREV_TAG: ${{ steps.previous.outputs.tag }}
+          PREV_VERSION: ${{ steps.previous.outputs.version_short }}
+          PREV_SUFFIX: ${{ steps.previous.outputs.tag_suffix }}
+        run: |
+          if [ "${ANY_TAG}" != "true" ]; then
+            tag_ref=""; use_version="${MILESTONE}"; increment_by="suffix"
+          elif [ "${PREV_VERSION}" = "${MILESTONE}" ] || \
+               [ "$(printf '%s\n%s\n' "${PREV_VERSION}" "${MILESTONE}" \
+                    | sort -V | tail -1)" = "${PREV_VERSION}" ]; then
+            tag_ref="${PREV_TAG}"; use_version=""
+            if [ -n "${PREV_SUFFIX}" ]; then increment_by="suffix"; else increment_by="patch,suffix"; fi
+          else
+            tag_ref=""; use_version="${MILESTONE}"; increment_by="suffix"
+          fi
+          {
+            echo "tag_ref=${tag_ref}"
+            echo "use_version=${use_version}"
+            echo "increment_by=${increment_by}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute this build's tag and version
+        id: next
+        uses: revam/gh-action-get-tag-and-version@v3
+        with:
+          use_tag_ref: ${{ steps.decide.outputs.tag_ref }}
+          use_version: ${{ steps.decide.outputs.use_version }}
+          increment_by: ${{ steps.decide.outputs.increment_by }}
+          prefix: v
+          suffix: dev
+
+      - name: Publish and package
+        run: scripts/package.sh "${{ steps.next.outputs.version }}"
+
+      - name: Create the dev release
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          TAG: ${{ steps.next.outputs.tag_full }}
+        run: |
+          jq -n \
+            --arg tag "${TAG}" \
+            --arg target "${GITHUB_SHA}" \
+            --arg body "Automated dev build from ${GITHUB_SHA}." \
+            '{ tag_name: $tag, target_commitish: $target, name: $tag,
+               body: $body, draft: false, prerelease: true }' \
+          | curl -fsS -X POST \
+              --header "Authorization: token ${GITEA_TOKEN}" \
+              --header "Content-Type: application/json" \
+              --data @- \
+              "${GITHUB_SERVER_URL%/}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
+          > /dev/null
+
+      - name: Upload the assets
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: scripts/gitea-release-asset.sh --tag "${{ steps.next.outputs.tag_full }}" dist/*
