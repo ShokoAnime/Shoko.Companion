@@ -170,7 +170,7 @@ Logs are under `logs/` — handy when troubleshooting.
 ### `settings.json` fields
 
 | Key | Type | Default | Description |
-|---|---|---|---|---|
+|---|---|---|---|
 | `Connections` | array | `[]` | Server connections (see README.md for schema). |
 | `MpvPath` | string | `null` | Path to mpv (auto-discovered on first use). |
 | `OnNewUrlAction` | string | `"Append"` | `"Replace"` / `"Ignore"` / `"Append"` when a new URL arrives while playing. |
