@@ -333,6 +333,11 @@ public class FolderActionHandler
             if (trimmed.Length == 0 || trimmed.EndsWith(":"))
                 trimmed = path;
 
+            // Utility pages pass file paths (e.g. unrecognized files); opening
+            // those means revealing the containing folder.
+            if (File.Exists(trimmed) && Path.GetDirectoryName(trimmed) is { Length: > 0 } parentDir)
+                trimmed = parentDir;
+
             if (!Directory.Exists(trimmed))
             {
                 Logger.Warn("Folder does not exist locally: {Path}", trimmed);
