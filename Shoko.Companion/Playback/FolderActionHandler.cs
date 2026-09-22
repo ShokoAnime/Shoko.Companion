@@ -188,7 +188,11 @@ public class FolderActionHandler
         var mapping = connection.ManagedFolderMappings.FirstOrDefault(m => m.Id == managedId);
         if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.LocalPath))
         {
-            var relativePart = absolutePath[matched.Path!.Length..].TrimStart('/', '\\');
+            var serverRoot = matched.Path!.TrimEnd('/', '\\');
+            var requestPath = absolutePath.TrimEnd('/', '\\');
+            var relativePart = requestPath.Length > serverRoot.Length
+                ? requestPath[serverRoot.Length..].TrimStart('/', '\\')
+                : string.Empty;
             var fullLocalPath = string.IsNullOrWhiteSpace(relativePart)
                 ? mapping.LocalPath
                 : NormalizeSeparators(Path.Combine(mapping.LocalPath, relativePart));
@@ -211,15 +215,23 @@ public class FolderActionHandler
     /// <summary>
     /// Find the managed folder whose server-side <see cref="ManagedFolderDto.Path"/>
     /// is the longest matching prefix of <paramref name="absolutePath"/>.
-    /// Returns null if no folder's path is a prefix.
+    /// Server paths may carry a trailing separator (so an exact-root request
+    /// would otherwise fail <see cref="string.StartsWith"/>), and the prefix
+    /// must end on a segment boundary to avoid matching sibling folders
+    /// (e.g. "_drop" vs "_drop2"). Returns null if no folder matches.
     /// </summary>
     internal static ManagedFolderDto? FindMatchingManagedFolder(
         List<ManagedFolderDto> folders, string absolutePath)
     {
+        var requestPath = absolutePath.TrimEnd('/', '\\');
         return folders
             .Where(f => !string.IsNullOrWhiteSpace(f.Path))
-            .OrderByDescending(f => f.Path!.Length)
-            .FirstOrDefault(f => absolutePath.StartsWith(f.Path!, StringComparison.OrdinalIgnoreCase));
+            .Select(f => (Folder: f, Root: f.Path!.TrimEnd('/', '\\')))
+            .OrderByDescending(x => x.Root.Length)
+            .FirstOrDefault(x => requestPath.StartsWith(x.Root, StringComparison.OrdinalIgnoreCase)
+                && (requestPath.Length == x.Root.Length
+                    || requestPath[x.Root.Length] is '/' or '\\'))
+            .Folder;
     }
 
     /// <summary>
