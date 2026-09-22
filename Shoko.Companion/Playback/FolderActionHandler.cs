@@ -315,12 +315,18 @@ public class FolderActionHandler
     {
         try
         {
-            if (!Directory.Exists(path))
+            // Explorer fails on trailing separators and silently opens its
+            // default view instead; keep drive roots like "Z:\" intact.
+            var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (trimmed.Length == 0 || trimmed.EndsWith(":"))
+                trimmed = path;
+
+            if (!Directory.Exists(trimmed))
             {
-                Logger.Warn("Folder does not exist locally: {Path}", path);
+                Logger.Warn("Folder does not exist locally: {Path}", trimmed);
                 _notifications.Show(
                     "Open Folder Failed",
-                    $"Folder not found locally:\n{path}",
+                    $"Folder not found locally:\n{trimmed}",
                     NotificationSeverity.Error);
                 return;
             }
@@ -330,7 +336,7 @@ public class FolderActionHandler
                 Process.Start(new ProcessStartInfo("explorer")
                 {
                     UseShellExecute = true,
-                    ArgumentList = { path }
+                    ArgumentList = { trimmed }
                 });
             }
             else if (OperatingSystem.IsMacOS())
@@ -338,7 +344,7 @@ public class FolderActionHandler
                 Process.Start(new ProcessStartInfo("open")
                 {
                     UseShellExecute = true,
-                    ArgumentList = { path }
+                    ArgumentList = { trimmed }
                 });
             }
             else
@@ -347,7 +353,7 @@ public class FolderActionHandler
                 Process.Start(new ProcessStartInfo("xdg-open")
                 {
                     UseShellExecute = true,
-                    ArgumentList = { path }
+                    ArgumentList = { trimmed }
                 });
             }
         }
