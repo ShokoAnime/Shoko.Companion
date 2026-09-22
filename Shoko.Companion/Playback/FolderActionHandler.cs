@@ -216,7 +216,7 @@ public class FolderActionHandler
     /// Find the managed folder whose server-side <see cref="ManagedFolderDto.Path"/>
     /// is the longest matching prefix of <paramref name="absolutePath"/>.
     /// Server paths may carry a trailing separator (so an exact-root request
-    /// would otherwise fail <see cref="string.StartsWith"/>), and the prefix
+    /// would otherwise fail the StartsWith prefix check), and the prefix
     /// must end on a segment boundary to avoid matching sibling folders
     /// (e.g. "_drop" vs "_drop2"). Returns null if no folder matches.
     /// </summary>

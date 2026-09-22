@@ -32,11 +32,15 @@ public class FolderActionHandlerTests
     public void OpenFolder_WithMatchingId_ReturnsTrue()
     {
         var conn = CreateTestConnection();
+        // OpenFolder verifies the local folder exists before opening it, so
+        // materialize the mapped path (incl. the relative part) on disk.
+        var localRoot = Path.Combine(Path.GetTempPath(), "shoko-companion-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(localRoot, "Series"));
         conn.ManagedFolderMappings.Add(new ManagedFolderMapping
         {
             Id = 1,
             ServerPath = "/mnt/anime",
-            LocalPath = "/home/user/media/anime"
+            LocalPath = localRoot
         });
 
         var parsed = new ParsedShokoUrl
@@ -44,7 +48,7 @@ public class FolderActionHandlerTests
             Action = ShokoUrlAction.OpenFolderRelative,
             ServerBaseUrl = "http://server",
             ManagedFolderId = 1,
-            RelativePath = "Series/Show"
+            RelativePath = "Series"
         };
 
         var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
@@ -57,11 +61,13 @@ public class FolderActionHandlerTests
     public void OpenFolder_WithMatchingIdNoRelativePath_ReturnsTrue()
     {
         var conn = CreateTestConnection();
+        var localRoot = Path.Combine(Path.GetTempPath(), "shoko-companion-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(localRoot);
         conn.ManagedFolderMappings.Add(new ManagedFolderMapping
         {
             Id = 2,
             ServerPath = "/media",
-            LocalPath = "D:\\Media\\Anime"
+            LocalPath = localRoot
         });
 
         var parsed = new ParsedShokoUrl
