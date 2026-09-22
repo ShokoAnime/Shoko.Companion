@@ -115,7 +115,7 @@ public class FolderActionHandler
 
         // Combine local path with optional relative path
         var fullPath = url.RelativePath is not null
-            ? Path.Combine(mapping.LocalPath, url.RelativePath)
+            ? NormalizeSeparators(Path.Combine(mapping.LocalPath, url.RelativePath))
             : mapping.LocalPath;
 
         Logger.Info("Resolved managed folder #{Id} to local path: {Path}", managedId, fullPath);
@@ -188,10 +188,10 @@ public class FolderActionHandler
         var mapping = connection.ManagedFolderMappings.FirstOrDefault(m => m.Id == managedId);
         if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.LocalPath))
         {
-            var relativePart = absolutePath[matched.Path!.Length..].TrimStart('/');
+            var relativePart = absolutePath[matched.Path!.Length..].TrimStart('/', '\\');
             var fullLocalPath = string.IsNullOrWhiteSpace(relativePart)
                 ? mapping.LocalPath
-                : Path.Combine(mapping.LocalPath, relativePart);
+                : NormalizeSeparators(Path.Combine(mapping.LocalPath, relativePart));
 
             Logger.Info("Resolved absolute path to local path: {Path}", fullLocalPath);
             OpenInFileManager(fullLocalPath);
@@ -298,6 +298,16 @@ public class FolderActionHandler
     }
 
     /// <summary>
+    /// Convert alternate directory separators ('/') to the platform's standard
+    /// one. Server-side paths are POSIX-style, so on Windows the mapped local
+    /// path would otherwise mix '\' and '/', which Explorer cannot open.
+    /// </summary>
+    internal static string NormalizeSeparators(string path)
+    {
+        return path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+    }
+
+    /// <summary>
     /// Open the specified path in the OS-default file manager.
     /// Falls back to a notification if the OS command fails.
     /// </summary>
@@ -305,6 +315,16 @@ public class FolderActionHandler
     {
         try
         {
+            if (!Directory.Exists(path))
+            {
+                Logger.Warn("Folder does not exist locally: {Path}", path);
+                _notifications.Show(
+                    "Open Folder Failed",
+                    $"Folder not found locally:\n{path}",
+                    NotificationSeverity.Error);
+                return;
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 Process.Start(new ProcessStartInfo("explorer")
