@@ -11,11 +11,22 @@ namespace Shoko.Companion.Tests;
 [Collection("SharedSettings")]
 public class FolderActionHandlerTests
 {
+    /// <summary>
+    /// Every folder the handler asked the file manager to open. The handler
+    /// under test never gets the real launcher: these tests use real folders
+    /// that exist, so the real one would open a window on the desktop the
+    /// suite runs on, once per test and per run.
+    /// </summary>
+    private readonly List<string> _opened = [];
+
     public FolderActionHandlerTests()
     {
         // Reset settings to a clean state for each test
         SettingsProvider.Instance.Settings.Connections.Clear();
     }
+
+    private FolderActionHandler Handler()
+        => new(new Mock<INotificationService>(MockBehavior.Strict).Object, _opened.Add);
 
     private static ServerConnection CreateTestConnection()
     {
@@ -51,10 +62,11 @@ public class FolderActionHandlerTests
             RelativePath = "Series"
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.True(result);
+        Assert.Equal([Path.Combine(localRoot, "Series")], _opened);
     }
 
     [Fact]
@@ -77,10 +89,11 @@ public class FolderActionHandlerTests
             ManagedFolderId = 2
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.True(result);
+        Assert.Equal([localRoot], _opened);
     }
 
     [Fact]
@@ -101,10 +114,11 @@ public class FolderActionHandlerTests
             ManagedFolderId = 999 // unknown
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.False(result);
+        Assert.Empty(_opened);
     }
 
     [Fact]
@@ -120,10 +134,11 @@ public class FolderActionHandlerTests
             ManagedFolderId = 42
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.False(result);
+        Assert.Empty(_opened);
     }
 
     [Fact]
@@ -136,10 +151,11 @@ public class FolderActionHandlerTests
             ManagedFolderId = null
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.False(result);
+        Assert.Empty(_opened);
     }
 
     [Fact]
@@ -160,10 +176,11 @@ public class FolderActionHandlerTests
             ManagedFolderId = 1
         };
 
-        var handler = new FolderActionHandler(new Mock<INotificationService>(MockBehavior.Strict).Object);
+        var handler = Handler();
         var result = handler.OpenFolder(parsed);
 
         Assert.False(result);
+        Assert.Empty(_opened);
     }
 
     // ── FindMatchingManagedFolder ───────────────────────────────────

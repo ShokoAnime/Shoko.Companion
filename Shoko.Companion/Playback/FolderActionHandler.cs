@@ -60,6 +60,13 @@ public class FolderActionHandler
     private readonly INotificationService _notifications;
 
     /// <summary>
+    /// Opens a folder that has been checked to exist. The real one starts
+    /// the OS file manager; tests pass their own so that running them never
+    /// opens a window on the desktop they run on.
+    /// </summary>
+    private readonly Action<string> _launchFileManager;
+
+    /// <summary>
     /// Initializes a new instance with the default notification service.
     /// </summary>
     public FolderActionHandler()
@@ -71,8 +78,18 @@ public class FolderActionHandler
     /// Initializes a new instance with the specified notification service.
     /// </summary>
     public FolderActionHandler(INotificationService notifications)
+        : this(notifications, LaunchFileManager)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance with the specified notification service and
+    /// file manager launcher.
+    /// </summary>
+    internal FolderActionHandler(INotificationService notifications, Action<string> launchFileManager)
     {
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+        _launchFileManager = launchFileManager ?? throw new ArgumentNullException(nameof(launchFileManager));
     }
 
     /// <summary>
@@ -320,6 +337,38 @@ public class FolderActionHandler
     }
 
     /// <summary>
+    /// Start the OS-default file manager on a folder.
+    /// </summary>
+    private static void LaunchFileManager(string folder)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Process.Start(new ProcessStartInfo("explorer")
+            {
+                UseShellExecute = true,
+                ArgumentList = { folder }
+            });
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            Process.Start(new ProcessStartInfo("open")
+            {
+                UseShellExecute = true,
+                ArgumentList = { folder }
+            });
+        }
+        else
+        {
+            // Linux / other Unix
+            Process.Start(new ProcessStartInfo("xdg-open")
+            {
+                UseShellExecute = true,
+                ArgumentList = { folder }
+            });
+        }
+    }
+
+    /// <summary>
     /// Open the specified path in the OS-default file manager.
     /// Falls back to a notification if the OS command fails.
     /// </summary>
@@ -348,31 +397,7 @@ public class FolderActionHandler
                 return;
             }
 
-            if (OperatingSystem.IsWindows())
-            {
-                Process.Start(new ProcessStartInfo("explorer")
-                {
-                    UseShellExecute = true,
-                    ArgumentList = { trimmed }
-                });
-            }
-            else if (OperatingSystem.IsMacOS())
-            {
-                Process.Start(new ProcessStartInfo("open")
-                {
-                    UseShellExecute = true,
-                    ArgumentList = { trimmed }
-                });
-            }
-            else
-            {
-                // Linux / other Unix
-                Process.Start(new ProcessStartInfo("xdg-open")
-                {
-                    UseShellExecute = true,
-                    ArgumentList = { trimmed }
-                });
-            }
+            _launchFileManager(trimmed);
         }
         catch (Exception ex)
         {
