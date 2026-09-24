@@ -4,8 +4,8 @@ namespace Shoko.Companion.Playback;
 
 /// <summary>
 /// A stream URL the companion recognised, broken into the parts it needs:
-/// which family it belongs to, which video it names, and — for media session URLs
-/// — which session it was minted for and which resource under the video it
+/// which family it belongs to, which video it names, and — for media session
+/// URLs — which session it was minted for and which resource under the video it
 /// addresses.
 /// </summary>
 public sealed record StreamUrlInfo
@@ -21,7 +21,7 @@ public sealed record StreamUrlInfo
     public required StreamUrlKind Kind { get; init; }
 
     /// <summary>
-    /// The video (Shoko file) ID the URL names. the plugin's <c>videoId</c> and
+    /// The video (Shoko file) ID the URL names. The plugin's <c>videoId</c> and
     /// APIv3's <c>{id}</c> are the same identifier.
     /// </summary>
     public required int VideoId { get; init; }

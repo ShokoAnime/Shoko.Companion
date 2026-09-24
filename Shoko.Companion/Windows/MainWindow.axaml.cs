@@ -694,18 +694,16 @@ public partial class MainWindow : Window
         var app = Avalonia.Application.Current as App;
         if (app is null) return;
 
-        MediaSessionStatusText.Text = "Checking plugin availability...";
+        MediaSessionStatusText.Text = "Checking for media sessions...";
         MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Gray);
 
-        var available = await MediaSessionClient.IsPluginAvailableAsync(reachableUrl, conn.ApiKey!);
-        if (!available)
+        if (!await app.ConnectMediaSessionAsync(reachableUrl, conn.ApiKey!))
         {
-            MediaSessionStatusText.Text = "Media Session plugin not available on this server.";
+            MediaSessionStatusText.Text = "This server does not offer media sessions.";
             MediaSessionStatusText.Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Red);
             return;
         }
 
-        await app.ConnectMediaSessionAsync(reachableUrl, conn.ApiKey!);
         UpdateMediaSessionState();
     }
 

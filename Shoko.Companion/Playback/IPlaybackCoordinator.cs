@@ -44,7 +44,7 @@ public interface IPlaybackCoordinator
     IReadOnlyList<MediaItemInfoDto> CurrentPlaylist { get; }
 
     /// <summary>
-    ///   Gets or sets this companion's own media session session id, pushed here by
+    ///   Gets or sets this companion's own media session id, pushed here by
     ///   <see cref="Server.MediaSessionClient"/> as it registers, reconnects
     ///   and disconnects. <c>null</c> whenever the companion holds none — the
     ///   plugin is absent, the hub is down, or registration has not returned

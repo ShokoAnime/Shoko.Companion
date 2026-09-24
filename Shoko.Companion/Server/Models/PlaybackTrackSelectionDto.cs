@@ -4,7 +4,7 @@ namespace Shoko.Companion.Server.Models;
 
 /// <summary>
 /// Which video, audio and subtitle track a session is playing with,
-/// mirroring the Media Session plugin's <c>PlaybackTrackSelection</c>.
+/// mirroring the media session plugin's <c>PlaybackTrackSelection</c>.
 ///
 /// Ordinals, not container stream IDs: the position among streams of the
 /// same kind, counting from zero, which is what Shoko persists and the

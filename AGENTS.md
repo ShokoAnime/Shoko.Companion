@@ -74,10 +74,19 @@ Program.Main()
 
 ### Media Session API Integration
 
-The companion optionally integrates with the Media Session plugin via SignalR:
+The companion optionally integrates with the server's media sessions via
+SignalR. It knows the feature by name and nothing else: no plugin name, no
+route.
 
-1. **Probe**: `GET /api/plugin/MediaSession/v1/Available` to check plugin availability
-2. **Connect**: `HubConnection` to `/signalr/plugin/MediaSession/v1` with `accessTokenFactory` sending the API key as Bearer token
+1. **Detect**: `GET /api/v3/Plugin/Features` (Shoko's own endpoint) and find
+   the feature named `media-sessions`. Its metadata carries `HubPath` and
+   `ApiPath`; a missing feature, another major `Version`, or no hub path all
+   mean "not available" (`MediaSessionClient.DetectAsync` /
+   `FindMediaSessions`). Detection runs before any existing connection is
+   torn down, so a failed probe leaves it alone
+2. **Connect**: `HubConnection` to the feature's `HubPath`, sending the API
+   key in the `apikey` header. **Never hardcode the hub path** — it is the
+   server's to say
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
 5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
@@ -217,10 +226,18 @@ decoder reset, which is the cheap end of what the capability is for.
 ### Stream URLs and the session id
 
 Two stream URL shapes exist: Shoko's `/api/v3/File/{id}/Stream`, authenticated
-by API key, and the plugin's `/api/plugin/MediaSession/v1/Stream/{videoId}[/...]`, which
-is anonymous and guarded on a `sessionId` query parameter. `StreamUrls`
+by API key, and the media session plugin's `{ApiPath}/Stream/{videoId}[/...]`,
+which is anonymous and guarded on a `sessionId` query parameter. `StreamUrls`
 (`Playback/StreamUrls.cs`) recognises both and is the only place that knows
 either shape.
+
+**`ApiPath` is the server's, never a constant here.** It comes from the
+`media-sessions` feature's metadata, which `ShokoApiClient.DetectMediaSessionsAsync`
+finds and caches per base URL. `PrepareM3u8Async` awaits it before reading a
+playlist, since every playback path goes through there, and the coordinator's
+`Urls` rebuilds the recogniser when the path changes. A `StreamUrls` built with
+no path recognises APIv3 only. Do not write the plugin's route or name into
+this repository: the server says where things are.
 
 **Every media session URL the companion plays carries the companion's own session
 id** — attached when the URL has none, replacing whatever is there when it has

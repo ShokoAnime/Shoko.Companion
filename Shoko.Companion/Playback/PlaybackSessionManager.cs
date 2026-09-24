@@ -90,8 +90,8 @@ public class PlaybackSessionManager
     private bool _mediaSessionConnected;
 
     /// <summary>
-    ///   Whether a media session is registered with the Media Session plugin right
-    ///   now — pushed here by <see cref="PlaybackCoordinator.MediaSessionId"/>,
+    ///   Whether a media session is registered with the media session plugin
+    ///   right now — pushed here by <see cref="PlaybackCoordinator.MediaSessionId"/>,
     ///   which is set from the hub as the session registers, reconnects and
     ///   goes away.
     ///

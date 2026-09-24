@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Upload one or more files as assets on a Gitea release.
 #
-# The replacement for `gh release upload`, ported from the media session plugin's repository. A
+# The replacement for `gh release upload`, ported from the media session
+# plugin's repository. A
 # script rather than a composite action: it is dry-runnable on a dev box,
 # needs nothing from the runner, and is the same artefact whether a
 # workflow or a human calls it.

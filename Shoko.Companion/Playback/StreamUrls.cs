@@ -5,18 +5,25 @@ using System.Text.RegularExpressions;
 namespace Shoko.Companion.Playback;
 
 /// <summary>
-///   Recognises the stream URLs the companion can meet, and rewrites MediaSession
-///   ones so that the session they stream under is the companion's own.
+///   Recognises the stream URLs the companion can meet, and rewrites the
+///   media session plugin's ones so that the session they stream under is
+///   the companion's own.
 ///
 ///   <para>
 ///     Two shapes exist. Shoko's own <c>/api/v3/File/{id}/Stream</c>, which is
-///     authenticated by API key and has no session concept; and the plugin's
-///     <c>/api/plugin/MediaSession/v1/Stream/{videoId}[/...]</c>, which is anonymous
+///     authenticated by API key and has no session concept; and the media
+///     session plugin's <c>{ApiPath}/Stream/{videoId}[/...]</c>, which is anonymous
 ///     — a <c>&lt;video&gt;</c> element cannot send headers — and is instead
 ///     guarded on a <c>sessionId</c> query parameter naming a session whose
 ///     current, next or previous item is the requested video. Neither shape is
 ///     anchored to the start of the URL, because a Shoko behind a path base
 ///     serves both under that prefix.
+///   </para>
+///
+///   <para>
+///     <c>ApiPath</c> is the server's to say, not ours: it is read from the
+///     <c>media-sessions</c> feature's metadata, and an instance built without
+///     one recognises APIv3 URLs only. Nothing here spells the plugin's route.
 ///   </para>
 ///
 ///   <h3>The session-id policy, and why</h3>
@@ -77,10 +84,10 @@ namespace Shoko.Companion.Playback;
 ///     one.
 ///   </para>
 /// </summary>
-public static partial class StreamUrls
+public sealed class StreamUrls
 {
     /// <summary>
-    /// The query parameter the plugin's stream endpoints are guarded on.
+    /// The query parameter the media session stream endpoints are guarded on.
     /// </summary>
     private const string SessionIdParameter = "sessionId";
 
@@ -90,18 +97,55 @@ public static partial class StreamUrls
     private const string ApiKeyParameter = "apikey";
 
     /// <summary>
+    ///   Shoko's APIv3 stream endpoint. Unanchored — a path base can sit in
+    ///   front of it — and deliberately left as loose as the single regex it
+    ///   replaces, so that no URL the companion recognised before stops being
+    ///   recognised now.
+    /// </summary>
+    private static readonly Regex ApiV3StreamRegex = new(
+        @"/File/(\d+)/Stream", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    ///   The media session stream endpoints under the server's
+    ///   <c>ApiPath</c>, or <c>null</c> when it is not known. Group 1 is the
+    ///   video ID, group 2 the resource path under it — <c>/master.m3u8</c>,
+    ///   <c>/Transcode/Video/12.m4s</c>, <c>/Info</c> and so on, absent for
+    ///   the bare full-file stream. The lookahead keeps <c>/Stream/42abc</c>
+    ///   from reading as video 42.
+    /// </summary>
+    private readonly Regex? _mediaSessionStreamRegex;
+
+    /// <summary>
+    ///   Recognise stream URLs against a server's media session API path.
+    /// </summary>
+    /// <param name="mediaSessionApiPath">
+    ///   The <c>ApiPath</c> of the server's <c>media-sessions</c> feature, or
+    ///   <c>null</c> when the server has none, which recognises APIv3 URLs
+    ///   only.
+    /// </param>
+    public StreamUrls(string? mediaSessionApiPath)
+    {
+        if (string.IsNullOrEmpty(mediaSessionApiPath))
+            return;
+
+        _mediaSessionStreamRegex = new Regex(
+            Regex.Escape(mediaSessionApiPath.TrimEnd('/')) + @"/Stream/(\d+)(/[^?#]*)?(?=[?#]|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
     ///   Parse a URL as a stream URL of either family. Returns <c>null</c>
     ///   when it is neither — an image URL, a local file path, a playlist
     ///   URL, a comment line out of an m3u8.
     /// </summary>
     /// <param name="url">The URL, absolute or relative.</param>
     /// <returns>The parsed URL, or <c>null</c> when unrecognised.</returns>
-    public static StreamUrlInfo? Parse(string? url)
+    public StreamUrlInfo? Parse(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
             return null;
 
-        if (MediaSessionStreamRegex().Match(url) is { Success: true } mediaSession)
+        if (_mediaSessionStreamRegex?.Match(url) is { Success: true } mediaSession)
         {
             var resource = mediaSession.Groups[2].Success
                 ? mediaSession.Groups[2].Value.TrimStart('/')
@@ -119,7 +163,7 @@ public static partial class StreamUrls
             };
         }
 
-        if (ApiV3StreamRegex().Match(url) is { Success: true } apiV3)
+        if (ApiV3StreamRegex.Match(url) is { Success: true } apiV3)
         {
             return new StreamUrlInfo
             {
@@ -140,7 +184,7 @@ public static partial class StreamUrls
     /// </summary>
     /// <param name="url">The URL or path to read.</param>
     /// <returns>The video ID, or <c>null</c> when the URL names no video.</returns>
-    public static int? TryGetVideoId(string? url)
+    public int? TryGetVideoId(string? url)
         => Parse(url)?.VideoId;
 
     /// <summary>
@@ -149,7 +193,7 @@ public static partial class StreamUrls
     /// </summary>
     /// <param name="url">The URL to rewrite.</param>
     /// <param name="ownSessionId">
-    ///   The companion's own media session session id, or <c>null</c> when it holds
+    ///   The companion's own media session id, or <c>null</c> when it holds
     ///   none — the plugin is absent, the hub is not connected, or
     ///   registration has not returned yet.
     /// </param>
@@ -162,7 +206,7 @@ public static partial class StreamUrls
     ///   Unchanged when it is not a media session URL, or when it already carries our
     ///   own session id.
     /// </returns>
-    public static string ForPlayback(string url, Guid? ownSessionId, string? apiKey = null)
+    public string ForPlayback(string url, Guid? ownSessionId, string? apiKey = null)
     {
         if (Parse(url) is not { Kind: StreamUrlKind.MediaSession } info)
             return url;
@@ -189,10 +233,10 @@ public static partial class StreamUrls
     /// </summary>
     /// <param name="info">The parsed media session URL.</param>
     /// <param name="apiKey">An API key to add when the URL carries none.</param>
-    /// <returns>The APIv3 URL, or <c>null</c> when the URL is not the plugin's.</returns>
-    private static string? ToApiV3(StreamUrlInfo info, string? apiKey)
+    /// <returns>The APIv3 URL, or <c>null</c> when it is not a media session URL.</returns>
+    private string? ToApiV3(StreamUrlInfo info, string? apiKey)
     {
-        if (MediaSessionStreamRegex().Match(info.Url) is not { Success: true } match)
+        if (_mediaSessionStreamRegex?.Match(info.Url) is not { Success: true } match)
             return null;
 
         // Everything before the plugin route is scheme, host and path base,
@@ -320,25 +364,4 @@ public static partial class StreamUrls
         var at = url.IndexOfAny(['?', '#']);
         return at < 0 ? string.Empty : url[at..];
     }
-
-    /// <summary>
-    ///   Shoko's APIv3 stream endpoint. Unanchored — a path base can sit in
-    ///   front of it — and deliberately left as loose as the single regex it
-    ///   replaces, so that no URL the companion recognised before stops being
-    ///   recognised now.
-    /// </summary>
-    /// <returns>The compiled regex.</returns>
-    [GeneratedRegex(@"/File/(\d+)/Stream", RegexOptions.IgnoreCase)]
-    private static partial Regex ApiV3StreamRegex();
-
-    /// <summary>
-    ///   the plugin's stream endpoints. Group 1 is the video ID, group 2 the
-    ///   resource path under it — <c>/master.m3u8</c>,
-    ///   <c>/Transcode/Video/12.m4s</c>, <c>/Info</c> and so on, absent for
-    ///   the bare full-file stream. The lookahead keeps <c>/Stream/42abc</c>
-    ///   from reading as video 42.
-    /// </summary>
-    /// <returns>The compiled regex.</returns>
-    [GeneratedRegex(@"/api/plugin/MediaSession/v1/Stream/(\d+)(/[^?#]*)?(?=[?#]|$)", RegexOptions.IgnoreCase)]
-    private static partial Regex MediaSessionStreamRegex();
 }

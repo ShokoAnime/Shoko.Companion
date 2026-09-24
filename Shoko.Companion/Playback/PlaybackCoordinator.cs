@@ -60,6 +60,33 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private const int FileLoadedDelayMs = 300;
 
     private readonly IShokoApiClient _apiClient;
+
+    /// <summary>
+    ///   The recogniser last built, and the API path it was built from, so
+    ///   the regex is rebuilt only when the server's path changes.
+    /// </summary>
+    private StreamUrls? _urls;
+    private string? _urlsApiPath;
+
+    /// <summary>
+    ///   Stream URL recognition for the current server, built from the
+    ///   <c>ApiPath</c> of its <c>media-sessions</c> feature as the API
+    ///   client last found it. <see cref="PrepareM3u8Async"/> finds it before
+    ///   anything is played, so every later reader sees the server's path.
+    /// </summary>
+    private StreamUrls Urls
+    {
+        get
+        {
+            var apiPath = _apiClient.MediaSessions?.ApiPath;
+            if (_urls is null || _urlsApiPath != apiPath)
+            {
+                _urls = new StreamUrls(apiPath);
+                _urlsApiPath = apiPath;
+            }
+            return _urls;
+        }
+    }
     private readonly IMpvController _mpv;
     private readonly INotificationService _notifications;
     private readonly IDiscordPresenceService _discord;
@@ -1344,7 +1371,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         // This URL came out of mpv's playlist, so on a media session stream it
         // carries whichever session the server minted it for. The slave is a
         // second player on the same stream and must not ride on that.
-        streamUrl = StreamUrls.ForPlayback(streamUrl, MediaSessionId, _apiClient.ApiKey);
+        streamUrl = Urls.ForPlayback(streamUrl, MediaSessionId, _apiClient.ApiKey);
 
         // Load the stream (paused, no audio, headless)
         await _thumbnailMpv.SetPropertyAsync("vo", "null");
@@ -1609,7 +1636,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(streamUrl))
                 continue;
 
-            var videoId = StreamUrls.TryGetVideoId(streamUrl);
+            var videoId = Urls.TryGetVideoId(streamUrl);
 
             var isCurrent = entry.Value<bool>("current");
             entries.Add(new()
@@ -1634,7 +1661,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(path)) return;
 
-        if (StreamUrls.TryGetVideoId(path) is not { } fileId) return;
+        if (Urls.TryGetVideoId(path) is not { } fileId) return;
 
         // Entering a new file — suppress treating default track selections as user changes
         _streamInitPhase = true;
@@ -2431,6 +2458,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         var result = new Dictionary<int, StreamMetadata>();
         string? playableUrl = m3u8Url;
 
+        // Recognising the plugin's entries needs its API path, which only the
+        // server can say. Found before the playlist is read, so an entry
+        // carrying someone else's session id cannot pass unrecognised.
+        await _apiClient.DetectMediaSessionsAsync();
+
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -2450,7 +2482,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                     if (lines[j].StartsWith("#")) continue;
                     if (string.IsNullOrWhiteSpace(lines[j])) continue;
 
-                    if (StreamUrls.TryGetVideoId(lines[j]) is { } videoId
+                    if (Urls.TryGetVideoId(lines[j]) is { } videoId
                         && !result.ContainsKey(videoId))
                     {
                         result[videoId] = ParseStreamMetadata(lines[j], videoId) with
@@ -2497,12 +2529,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             output[i] = lines[i];
 
             if (lines[i].StartsWith('#')
-                || StreamUrls.Parse(lines[i]) is not { Kind: StreamUrlKind.MediaSession } info)
+                || Urls.Parse(lines[i]) is not { Kind: StreamUrlKind.MediaSession } info)
             {
                 continue;
             }
 
-            var rewritten = StreamUrls.ForPlayback(lines[i], MediaSessionId, apiKey);
+            var rewritten = Urls.ForPlayback(lines[i], MediaSessionId, apiKey);
             if (string.Equals(rewritten, lines[i], StringComparison.Ordinal))
                 continue;
 
@@ -2512,13 +2544,13 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             if (MediaSessionId is null)
             {
                 Logger.Warn(
-                    "media session entry for video {VideoId} ({Resource}) arrived with session {ForeignSessionId} " +
+                    "Media session entry for video {VideoId} ({Resource}) arrived with session {ForeignSessionId} " +
                     "and this companion holds none of its own; rewrote it rather than borrowing that session",
                     info.VideoId, info.Resource ?? "stream", info.SessionId);
             }
             else
             {
-                Logger.Debug("media session entry for video {VideoId} now carries our session {SessionId}",
+                Logger.Debug("Media session entry for video {VideoId} now carries our session {SessionId}",
                     info.VideoId, MediaSessionId);
             }
         }

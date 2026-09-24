@@ -245,7 +245,7 @@ public class CompanionSettings
     /// <para>
     ///   Governs syncing <b>this companion does itself</b>, which is only
     ///   what plays while no media session is connected. Registering a
-    ///   session with the Media Session plugin is consent to the server writing
+    ///   session with the media session plugin is consent to the server writing
     ///   watch state from the session's own state reports, so anything
     ///   played through one is synced by the server whatever this says:
     ///   leaving it on adds no second writer, and turning it off does not

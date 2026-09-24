@@ -634,10 +634,22 @@ public partial class App : Application
     // other than this session, which is where it now happens.
 
     /// <summary>
-    /// Connect to the Media Session hub for the given server.
+    /// Connect to the Media Session hub for the given server, at the path
+    /// the server's <c>media-sessions</c> feature names.
     /// </summary>
-    public async Task ConnectMediaSessionAsync(string baseUrl, string apiKey)
+    /// <returns>
+    /// <c>false</c> when the server does not serve media sessions, in which
+    /// case any existing connection is left as it was.
+    /// </returns>
+    public async Task<bool> ConnectMediaSessionAsync(string baseUrl, string apiKey)
     {
+        var feature = await MediaSessionClient.DetectAsync(baseUrl, apiKey);
+        if (feature is null)
+        {
+            Logger.Warn("Media sessions not available at {Url}", baseUrl);
+            return false;
+        }
+
         // Capture playback state before disposing the old client,
         // so the new client can re-register with the correct state.
         var initialState = BuildStateFromCoordinator();
@@ -647,16 +659,9 @@ public partial class App : Application
 
         MediaSessionClient = new MediaSessionClient(baseUrl, apiKey, DeviceInfo.DeviceName, _coordinator!, initialState);
 
-        var available = await MediaSessionClient.IsPluginAvailableAsync(baseUrl, apiKey);
-        if (available)
-        {
-            Logger.Info("Media Session plugin available, connecting to {Url}", baseUrl);
-            await MediaSessionClient.ConnectAsync();
-        }
-        else
-        {
-            Logger.Warn("Media Session plugin not available at {Url}", baseUrl);
-        }
+        Logger.Info("Media sessions available, connecting to {Url}{HubPath}", baseUrl, feature.HubPath);
+        await MediaSessionClient.ConnectAsync(feature);
+        return true;
     }
 
     /// <summary>

@@ -30,6 +30,19 @@ public interface IShokoApiClient
     string? ApiKey { get; }
 
     /// <summary>
+    /// The current server's <c>media-sessions</c> feature, as last found by
+    /// <see cref="DetectMediaSessionsAsync"/>, or <c>null</c> when it has
+    /// not been found for this server. Cleared when the base URL changes.
+    /// </summary>
+    MediaSessionsFeature? MediaSessions { get; }
+
+    /// <summary>
+    /// Find the current server's <c>media-sessions</c> feature, asking the
+    /// server only until it has been found once for this base URL.
+    /// </summary>
+    Task<MediaSessionsFeature?> DetectMediaSessionsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Exchange user+pass for an API key. Sets ApiKey on success.
     /// </summary>
     Task<bool> AuthenticateAsync(string username, string password, string device, CancellationToken ct = default);

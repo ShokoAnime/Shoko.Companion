@@ -12,8 +12,9 @@ public enum StreamUrlKind
     ApiV3,
 
     /// <summary>
-    /// A Media Session plugin stream endpoint,
-    /// <c>/api/plugin/MediaSession/v1/Stream/{videoId}[/...]</c>. Anonymous, and
+    /// A media session plugin stream endpoint,
+    /// <c>{ApiPath}/Stream/{videoId}[/...]</c>, where <c>ApiPath</c> comes
+    /// from the server's <c>media-sessions</c> feature. Anonymous, and
     /// guarded on a <c>sessionId</c> query parameter naming a session whose
     /// current, next or previous item is the requested video.
     /// </summary>

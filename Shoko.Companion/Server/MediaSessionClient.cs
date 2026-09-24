@@ -128,28 +128,18 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Probe the server to check if the Media Session plugin is available.
+    /// Ask the server whether it serves media sessions, and where.
     /// </summary>
     /// <param name="baseUrl">The server base URL.</param>
     /// <param name="apiKey">The API key for authentication.</param>
-    /// <returns><c>true</c> if the plugin endpoint responds with success.</returns>
-    public static async Task<bool> IsPluginAvailableAsync(string baseUrl, string apiKey)
+    /// <returns>
+    /// The <c>media-sessions</c> feature, or <c>null</c> when the server
+    /// does not advertise one this build can read, or cannot be asked.
+    /// </returns>
+    public static async Task<MediaSessionsFeature?> DetectAsync(string baseUrl, string apiKey)
     {
-        try
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var url = $"{baseUrl.TrimEnd('/')}/api/plugin/MediaSession/v1/Available";
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("apikey", apiKey);
-
-            using var response = await http.SendAsync(request).ConfigureAwait(false);
-            return response.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            Logger.Debug(ex, "Media Session plugin availability check failed");
-            return false;
-        }
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        return await MediaSessionDetection.DetectAsync(http, baseUrl, apiKey).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -175,13 +165,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <summary>
     /// Connect to the hub and register as a companion session.
     /// </summary>
-    public async Task ConnectAsync()
+    /// <param name="feature">
+    /// What <see cref="DetectAsync"/> found, which says where the hub is.
+    /// </param>
+    public async Task ConnectAsync(MediaSessionsFeature feature)
     {
         if (_connection is not null)
             await DisposeAsync();
 
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{_baseUrl}/signalr/plugin/MediaSession/v1", options =>
+            .WithUrl($"{_baseUrl}{feature.HubPath}", options =>
             {
                 options.Headers["apikey"] = _apiKey;
             })

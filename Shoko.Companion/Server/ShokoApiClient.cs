@@ -34,7 +34,34 @@ public class ShokoApiClient : IShokoApiClient
     /// Set the server base URL used for API requests.
     /// Must be set before making any API calls.
     /// </summary>
-    public void SetBaseUrl(string baseUrl) => _baseUrl = baseUrl.TrimEnd('/');
+    public void SetBaseUrl(string baseUrl)
+    {
+        var trimmed = baseUrl.TrimEnd('/');
+        if (trimmed != _baseUrl)
+            MediaSessions = null;
+        _baseUrl = trimmed;
+    }
+
+    /// <inheritdoc />
+    public MediaSessionsFeature? MediaSessions { get; private set; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Only a found feature is kept. A server without one is asked again
+    /// next time, because "not found" may be a server still starting or a
+    /// plugin installed since, and the question costs one request.
+    /// </remarks>
+    public async Task<MediaSessionsFeature?> DetectMediaSessionsAsync(CancellationToken ct = default)
+    {
+        if (MediaSessions is { } known)
+            return known;
+
+        var baseUrl = _baseUrl;
+        var feature = await MediaSessionDetection.DetectAsync(_httpClient, baseUrl, ApiKey, ct).ConfigureAwait(false);
+        if (baseUrl == _baseUrl)
+            MediaSessions = feature;
+        return feature;
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShokoApiClient" /> class.
