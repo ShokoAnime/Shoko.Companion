@@ -5,7 +5,7 @@
 ;   SourceDir — directory containing the published binary (relative or absolute)
 
 #define MyAppName "Shoko Companion"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Shoko"
 #define MyAppURL "https://shokoanime.com"
 #define MyAppExeName "shoko-companion.exe"
