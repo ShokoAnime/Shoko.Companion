@@ -105,7 +105,7 @@
 
                 <!-- === Media Session API === -->
                 <Separator Margin="0,4"/>
-                <TextBlock Text="Media Session API" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
+                <TextBlock Text="Media Session API (requires plugin)" FontWeight="SemiBold" FontSize="14" Margin="0,4,0,0"/>
                 <TextBlock Text="Remote playback control through the server's media sessions."
                            FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
 
