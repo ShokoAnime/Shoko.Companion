@@ -285,6 +285,13 @@ public class ShokoApiClient : IShokoApiClient
     }
 
     /// <inheritdoc />
+    public string BuildExternalSubtitleUrl(int fileId, string filename)
+    {
+        return AppendApiKey(
+            $"{_baseUrl}/api/v3/File/{fileId}/StreamDirectory/ExternalSub/{Uri.EscapeDataString(filename)}");
+    }
+
+    /// <inheritdoc />
     public async Task<List<ManagedFolderDto>?> FetchManagedFoldersAsync(CancellationToken ct = default)
     {
         LastResponseWasUnauthorized = null;

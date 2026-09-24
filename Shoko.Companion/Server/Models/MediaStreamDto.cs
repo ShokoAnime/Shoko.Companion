@@ -47,4 +47,18 @@ public class MediaStreamDto
     /// Whether this stream is marked as forced.
     /// </summary>
     public bool IsForced { get; set; }
+
+    /// <summary>
+    /// Subtitles only: whether this is a subtitle file sitting beside the
+    /// video rather than a stream inside it. Shoko lists these after every
+    /// embedded subtitle stream.
+    /// </summary>
+    public bool IsExternal { get; set; }
+
+    /// <summary>
+    /// Subtitles only: the external file's name, which is what
+    /// <c>/api/v3/File/{id}/StreamDirectory/ExternalSub/{filename}</c>
+    /// serves it by. Only sent when <see cref="IsExternal"/> is set.
+    /// </summary>
+    public string? ExternalFilename { get; set; }
 }

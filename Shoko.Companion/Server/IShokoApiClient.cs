@@ -73,6 +73,11 @@ public interface IShokoApiClient
     string BuildStreamUrl(int fileId);
 
     /// <summary>
+    /// Build the URL of a subtitle file beside a video, including the apikey.
+    /// </summary>
+    string BuildExternalSubtitleUrl(int fileId, string filename);
+
+    /// <summary>
     /// Fetch the list of managed (import) folders from the Shoko server.
     /// Returns null on failure.
     /// </summary>

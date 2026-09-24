@@ -1810,6 +1810,38 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         };
 
     /// <summary>
+    ///   Hand mpv the subtitle files beside this video, per
+    ///   <see cref="ExternalSubtitles"/>. Added unselected, so choosing one is
+    ///   left to <see cref="RestoreStreamsAsync"/> and the viewer.
+    /// </summary>
+    /// <param name="fileId">The video now loaded in mpv.</param>
+    private async Task AddExternalSubtitlesAsync(int fileId)
+    {
+        if (!_mediaInfo.TryGetValue(fileId, out var mi))
+            return;
+
+        foreach (var subtitle in ExternalSubtitles.ToAdd(mi))
+        {
+            var url = _apiClient.BuildExternalSubtitleUrl(fileId, subtitle.ExternalFilename!);
+            try
+            {
+                await _mpv.SendCommandAsync("sub-add",
+                    [url, "auto", subtitle.Title ?? subtitle.ExternalFilename, subtitle.LanguageCode ?? string.Empty]);
+                Logger.Debug("Added external subtitle {Filename} for video {VideoId}",
+                    subtitle.ExternalFilename, fileId);
+            }
+            catch (Exception ex)
+            {
+                // Stop here: adding the next one would give it this one's
+                // position, and a restore would then select the wrong file.
+                Logger.Warn(ex, "Could not add external subtitle {Filename} for video {VideoId}; not adding the rest",
+                    subtitle.ExternalFilename, fileId);
+                break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Restore audio and subtitle selections for the given file using the saved user
     /// data and the in-session language carryover. Updates the session's stored selections.
     /// </summary>
@@ -1974,6 +2006,9 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
                         _sessionVideoId = null;
                     }
+
+                    // External subtitles first: restoring may select one.
+                    await AddExternalSubtitlesAsync(fileId.Value);
 
                     // Restore audio/subtitle selections
                     await RestoreStreamsAsync(fileId.Value, ud);
