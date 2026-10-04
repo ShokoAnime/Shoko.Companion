@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Text;
 using NLog;
 using Shoko.Companion.Configuration;
 
@@ -125,49 +124,18 @@ public class PlatformNotificationService : INotificationService
 
     private static void ShowWindows(string title, string message, NotificationSeverity severity)
     {
-        // Try PowerShell toast notification first; fall back to msg.exe if it fails.
+        // In-process WinRT toast first; fall back to msg.exe if it fails.
         try
         {
-            ShowWindowsPowerShellToast(title, message);
+            WindowsAppUserModelId.EnsureRegistered();
+            WindowsToast.Show(title, message);
         }
-        catch
+        catch (Exception ex)
         {
+            // Last-resort fallback: a centered Win32 popup. Less ideal but never silent.
+            Logger.Debug(ex, "Inline toast failed; falling back to msg.exe");
             ShowWindowsMsg(title, message);
         }
-    }
-
-    /// <summary>
-    /// Show a Windows toast notification via PowerShell.
-    /// Uses -EncodedCommand (Base64 UTF-16LE) to avoid quoting/shell-escaping issues.
-    /// </summary>
-    private static void ShowWindowsPowerShellToast(string title, string message)
-    {
-        // Build the toast XML — use double-quote attributes since this is embedded
-        // in a PowerShell @'...'@ here-string where only '@ is special.
-        var xml = $"<toast><visual><binding template=\"ToastGeneric\"><text>{EscapeForXml(title)}</text><text>{EscapeForXml(message)}</text></binding></visual></toast>";
-
-        var psScript = $@"
-$xml = @'
-{xml}
-'@;
-$xmlDoc = New-Object Windows.Data.Xml.Dom.XmlDocument;
-$xmlDoc.LoadXml($xml);
-$toast = New-Object Windows.UI.Notifications.ToastNotification($xmlDoc);
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier().Show($toast);
-";
-        var bytes = Encoding.Unicode.GetBytes(psScript.Trim());
-        var base64 = Convert.ToBase64String(bytes);
-
-        var psi = new ProcessStartInfo("powershell")
-        {
-            UseShellExecute = false,
-        };
-
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-EncodedCommand");
-        psi.ArgumentList.Add(base64);
-
-        Process.Start(psi)?.Dispose();
     }
 
     /// <summary>
@@ -194,10 +162,4 @@ $toast = New-Object Windows.UI.Notifications.ToastNotification($xmlDoc);
     /// </summary>
     private static string EscapeForAppleScript(string value)
         => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
-    /// <summary>
-    /// Escape a string for XML text content (&amp;, &lt;, &gt;).
-    /// </summary>
-    private static string EscapeForXml(string value)
-        => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 }

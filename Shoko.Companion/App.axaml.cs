@@ -132,6 +132,11 @@ public partial class App : Application
             // 1. URL scheme registration (shown once)
             if (!SettingsProvider.Instance.Settings.UrlSchemeRegistrationAsked)
             {
+                // Ensure the Windows toast AUMID + Start Menu shortcut exists before
+                // the first toast fires (register click shows one immediately).
+                if (OperatingSystem.IsWindows())
+                    WindowsAppUserModelId.EnsureRegistered();
+
                 if (await ShowUrlSchemeRegistrationPromptAsync())
                 {
                     UrlSchemeRegistrar.Register();

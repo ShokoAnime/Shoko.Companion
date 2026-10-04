@@ -7,6 +7,17 @@
         <LangVersion>latest</LangVersion>
         <NoWarn>$(NoWarn);NU1903</NoWarn>
     </PropertyGroup>
+    <!--
+      Mirrors the main project's conditional Windows platform identity so the
+      ProjectReference restores compatibly on Windows hosts (the main project
+      becomes net10.0-windows10.0.19041 there). On Linux/macOS hosts the
+      condition is false and nothing changes.
+    -->
+    <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win-')) OR $([MSBuild]::IsOSPlatform('Windows'))">
+        <TargetPlatformIdentifier>windows</TargetPlatformIdentifier>
+        <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+        <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Shoko.Companion\Shoko.Companion.csproj" />
     </ItemGroup>

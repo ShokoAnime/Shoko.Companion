@@ -39,6 +39,25 @@
         -->
         <WarningsAsErrors Condition="'$(EnforceDocumentation)' == 'true'">$(WarningsAsErrors);CS1591</WarningsAsErrors>
     </PropertyGroup>
+    <!--
+      Windows-only platform declaration: lets WindowsToast.cs use the WinRT
+      projection (Windows.UI.Notifications) in-process. The SDK auto-references
+      Microsoft.Windows.SDK.NET.Ref and defines the WINDOWS symbol when the
+      TargetPlatformIdentifier is windows. Scoped to a Windows host (any/no RID,
+      so plain `dotnet build` / `dotnet test` work) or a win-* RID (covers the
+      Gitea Linux runner's win-x64 publish). Linux/macOS builds stay plain
+      net10.0 and compile the Windows toast body out via #if WINDOWS.
+    -->
+    <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win-')) OR $([MSBuild]::IsOSPlatform('Windows'))">
+        <TargetPlatformIdentifier>windows</TargetPlatformIdentifier>
+        <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+        <!--
+          Lets the Gitea Linux runner publish win-x64: building a windows-targeting
+          project on a non-Windows host requires this (NETSDK1147). No-op on a
+          Windows host; irrelevant to Linux/macOS RIDs (condition false there).
+        -->
+        <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="Avalonia" Version="11.3.12" />
         <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
