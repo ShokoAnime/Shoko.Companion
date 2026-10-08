@@ -8,7 +8,7 @@ Avalonia-based Linux/Windows/macOS desktop tray companion for Shoko Server. Sits
 
 - **.NET 10** / C# 13 / `net10.0`
 - **Avalonia 12.1.2** — desktop UI framework
-- **NLog 6.1.3** — structured logging (JSONL files under `{ConfigRoot}/logs/`)
+- **NLog 6.2.1** — structured logging (JSONL files under `{ConfigRoot}/logs/`)
 - **Newtonsoft.Json 13** — all JSON serialization (NO System.Text.Json)
 - **Microsoft.AspNetCore.SignalR.Client 10.0** — Media Session plugin hub connection
 - **Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson 10.0** — the hub payload serialiser, so the connection obeys the Newtonsoft rule too
