@@ -20,7 +20,7 @@
         <!-- Path field + Browse button -->
         <TextBox Grid.Row="2" Grid.Column="0"
                  Name="LocalPathBox"
-                 Watermark="Select the local folder..."/>
+                 PlaceholderText="Select the local folder..."/>
         <Button Grid.Row="2" Grid.Column="1"
                 Name="BrowseButton" Content="Browse…"
                 Click="OnBrowseClick"

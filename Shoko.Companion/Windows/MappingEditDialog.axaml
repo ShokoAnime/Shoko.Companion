@@ -14,7 +14,7 @@
 
                 <TextBlock Text="Local path:" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="*,Auto">
-                    <TextBox Grid.Column="0" Name="LocalPathBox" Watermark="e.g. /home/user/media/anime"/>
+                    <TextBox Grid.Column="0" Name="LocalPathBox" PlaceholderText="e.g. /home/user/media/anime"/>
                     <Button Grid.Column="1" Name="BrowseButton" Content="Browse…"
                             Click="OnBrowseClick" Margin="12,0,0,0" MinWidth="80"/>
                 </Grid>

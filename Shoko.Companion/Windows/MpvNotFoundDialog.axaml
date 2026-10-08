@@ -15,7 +15,7 @@
 
             <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                 <TextBlock Text="mpv executable path" Grid.Row="0" Grid.ColumnSpan="2"/>
-                <TextBox Name="MpvPathBox" Watermark="e.g. /usr/bin/mpv" Grid.Row="1" Grid.Column="0"
+                <TextBox Name="MpvPathBox" PlaceholderText="e.g. /usr/bin/mpv" Grid.Row="1" Grid.Column="0"
                          TextChanged="OnPathTextChanged"/>
                 <Button Name="BrowseButton" Content="Browse…" Click="OnBrowseClick"
                         Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>

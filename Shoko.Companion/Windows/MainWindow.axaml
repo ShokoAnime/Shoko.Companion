@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:cfg="using:Shoko.Companion.Configuration"
         x:Class="Shoko.Companion.Windows.MainWindow"
         Title="Shoko Companion"
          Width="680"
@@ -14,7 +15,7 @@
 
                 <ListBox Name="ConnectionListBox" Height="100">
                     <ListBox.ItemTemplate>
-                        <DataTemplate>
+                        <DataTemplate x:DataType="cfg:ServerConnection">
                             <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -59,7 +60,7 @@
 
                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                     <TextBlock Text="mpv executable path" Grid.Row="0" Grid.ColumnSpan="2"/>
-                    <TextBox Name="MpvPathBox" Watermark="Path to mpv (leave blank for auto-detect)" Grid.Row="1" Grid.Column="0"/>
+                    <TextBox Name="MpvPathBox" PlaceholderText="Path to mpv (leave blank for auto-detect)" Grid.Row="1" Grid.Column="0"/>
                     <Button Name="BrowseMpvButton" Content="Browse…" Click="OnBrowseMpvClick"
                             Grid.Row="1" Grid.Column="1" Margin="8,0,0,0"/>
                 </Grid>
@@ -167,7 +168,7 @@
 
                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                     <TextBlock Text="Discord client ID" Margin="0,0,0,4" Grid.ColumnSpan="2"/>
-                    <TextBox Name="DiscordClientIdBox" Watermark="Client ID (leave blank for default)"
+                    <TextBox Name="DiscordClientIdBox" PlaceholderText="Client ID (leave blank for default)"
                              IsEnabled="{Binding IsChecked, ElementName=DiscordEnabledCheck}"
                              Grid.Row="1" Grid.Column="0"
                              TextChanged="OnDiscordClientIdTextChanged"/>
@@ -202,11 +203,11 @@
 
                 <TextBlock Text="'Privacy Mode' keybinding" Margin="0,4,0,0"/>
                 <TextBox Name="PrivacyModeMpvKeybindingBox"
-                         Watermark="Ctrl+p"
+                         PlaceholderText="Ctrl+p"
                          TextChanged="OnAutoSaveSetting"/>
                 <TextBlock Text="'Open Companion Settings' keybinding" Margin="0,4,0,0"/>
                 <TextBox Name="SettingsMpvKeybindingBox"
-                         Watermark="Ctrl+Shift+o"
+                         PlaceholderText="Ctrl+Shift+o"
                          TextChanged="OnAutoSaveSetting"/>
                 <CheckBox Name="PrivacyModeForRestrictedCheck"
                           Content="Always use privacy mode for restricted content"

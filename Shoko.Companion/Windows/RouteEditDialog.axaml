@@ -10,7 +10,7 @@
 
             <TextBlock Text="Server address:" FontWeight="SemiBold"/>
             <TextBox Name="BaseUrlBox"
-                     Watermark="e.g. myserver:8111 or myserver:8111/subpath"/>
+                     PlaceholderText="e.g. myserver:8111 or myserver:8111/subpath"/>
 
             <CheckBox Name="UseHttpsCheck" Content="Use HTTPS"/>
 

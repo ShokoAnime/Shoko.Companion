@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:cfg="using:Shoko.Companion.Configuration"
         x:Class="Shoko.Companion.Windows.ManageFoldersDialog"
         Title="Manage Folder Mappings"
         Width="640"
@@ -13,7 +14,7 @@
             <ComboBox Name="ConnectionCombo" MinWidth="250"
                       SelectionChanged="OnConnectionChanged">
                 <ComboBox.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="cfg:ServerConnection">
                         <TextBlock Text="{Binding Name}"/>
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -25,7 +26,7 @@
         <ListBox Name="MappingListBox" Grid.Row="1"
                  SelectionMode="Single" BorderThickness="1">
             <ListBox.ItemTemplate>
-                <DataTemplate>
+                <DataTemplate x:DataType="cfg:ManagedFolderMapping">
                     <StackPanel Orientation="Vertical" Spacing="2" Margin="8,4">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold"

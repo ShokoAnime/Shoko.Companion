@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:cfg="using:Shoko.Companion.Configuration"
         x:Class="Shoko.Companion.Windows.AddConnectionDialog"
         Title="Add Connection"
          Width="640"
@@ -10,12 +11,12 @@
             <StackPanel Spacing="8" Name="FormPanel">
 
                 <TextBlock Text="Connection name:" FontWeight="SemiBold"/>
-                <TextBox Name="NameBox" Watermark="e.g. My Home Server"/>
+                <TextBox Name="NameBox" PlaceholderText="e.g. My Home Server"/>
 
                 <TextBlock Text="Routes (probed in order):" FontWeight="SemiBold"/>
                 <ListBox Name="RouteListBox" Height="100">
                     <ListBox.ItemTemplate>
-                        <DataTemplate>
+                        <DataTemplate x:DataType="cfg:ConnectionRoute">
                             <TextBlock Text="{Binding FullUrl}" TextTrimming="CharacterEllipsis"/>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -33,8 +34,8 @@
 
                 <TextBlock Text="Login with username/password:" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="*,*">
-                    <TextBox Name="UsernameBox" Watermark="Username" Grid.Column="0" Margin="0,0,4,0"/>
-                    <TextBox Name="PasswordBox" Watermark="Password" PasswordChar="*" Grid.Column="1"/>
+                    <TextBox Name="UsernameBox" PlaceholderText="Username" Grid.Column="0" Margin="0,0,4,0"/>
+                    <TextBox Name="PasswordBox" PlaceholderText="Password" PasswordChar="*" Grid.Column="1"/>
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
