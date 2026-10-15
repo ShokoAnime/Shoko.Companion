@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using NLog;
 
 namespace Shoko.Companion.Configuration;
@@ -17,11 +18,13 @@ public class SettingsProvider
     public static SettingsProvider Instance { get; } = new();
 
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private static readonly JsonSerializerSettings JsonSettings = new()
+    // Enums are written by name, so the file reads well when edited by hand; numbers still load.
+    internal static readonly JsonSerializerSettings JsonSettings = new()
     {
         Formatting = Formatting.Indented,
         NullValueHandling = NullValueHandling.Include,
-        DefaultValueHandling = DefaultValueHandling.Include
+        DefaultValueHandling = DefaultValueHandling.Include,
+        Converters = [new StringEnumConverter()],
     };
 
     /// <summary>
