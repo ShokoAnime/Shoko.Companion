@@ -1,250 +1,220 @@
 # Shoko Companion
 
-A lightweight, cross-platform **system-tray companion** for [Shoko Server](https://shokoanime.com/) that plays your anime in **mpv**, reports watch progress back to the server, (optionally) integrates with the **Media Session** plugin for remote playback control, and (optionally) shows what you're watching as **Discord Rich Presence**.
+Shoko Companion is a small tray app for [Shoko Server](https://shokoanime.com/). When you click a `shoko://` link in the Shoko Web UI, it plays the video in [mpv](https://mpv.io/) on your computer and reports your progress back to the server, so resume positions and watched states stay in sync.
 
-- **Binary:** `shoko-companion`
-- **Display name:** Shoko Companion
-- **Framework:** .NET 10 · Avalonia 11
-- **Platforms:** Windows (x64), Linux (x64 / arm64), macOS (arm64)
-- **Repository:** [github.com/ShokoAnime/Shoko.Companion](https://github.com/ShokoAnime/Shoko.Companion)
+It can also:
 
----
+- open a file's folder in your file manager, using mappings from the server's managed folders to paths on your machine;
+- show what you're watching in Discord (Rich Presence);
+- join the server's media sessions, if the server has a plugin that provides them, so you can see and control playback from another device and hand a video over from one device to another.
 
-## Features
+It runs on Windows (x64), Linux (x64 and arm64) and macOS (Apple Silicon).
 
-- **Plays in mpv** — catches `shoko://` URLs, launches mpv, plays the stream.
-- **Playback events** — periodic position updates, start/pause/resume/stop events, auto-marks watched at ≥ 97.5%. `Play` (new media) and `Resume` (unpause current) are separate commands.
-- **Resume support** — pre-fetches resume position and seeks mpv on file load.
-- **Server connections** — multiple connections with route fallback; auto-discovered from  the `shoko://` URLs or manually configured.
-- **Managed folder mappings** — resolves "Open Folder" actions from the web UI to local paths.
-- **Discord Rich Presence** — optionally shows series/episode info in Discord.
-- **Cross-platform tray app** — Windows, Linux, macOS. Native notifications.
+For step-by-step setup and day-to-day use, read the **[usage guide](./USAGE.md)**.
 
-### Media Session API Support
+## Getting it
 
-When the **Media Session** plugin is installed on the Shoko server, the companion can connect to its SignalR hub for remote playback control. This enables:
-- Other devices/clients for the user to see what's playing and send play/pause/seek/stop commands
-- Live state updates pushed via SignalR
-- Per-connection auto-connect with manual Connect/Disconnect in settings
+Download the latest build from the [Releases page](https://github.com/ShokoAnime/Shoko.Companion/releases):
+
+| Platform | File |
+|---|---|
+| Windows | `shoko-companion.Installer.exe` |
+| Linux x64 | `shoko-companion-linux-x64.AppImage` |
+| Linux arm64 | `shoko-companion-linux-arm64.AppImage` |
+| macOS (Apple Silicon) | `shoko-companion-osx-arm64.dmg` |
+
+The release builds bundle the .NET runtime, so there's nothing else to install for the app itself. You do need:
+
+- a Shoko Server you can reach from this machine;
+- mpv, installed somewhere the companion can find it (see the [usage guide](./USAGE.md#1-install-mpv));
+- a Discord desktop client or RPC server, if you want Rich Presence.
+
+## How playback is synced
+
+When you play something, the companion asks the server for the playlist, picks up your resume position, and starts mpv. While it plays, the companion tells the server what happened. How much it tells depends on `PlaybackSyncingBehavior`:
+
+- **After playback** (the default): one event when you stop.
+- **On every event**: start, pause, resume and stop.
+- **Live sync**: the same, plus a progress update about once a minute while playing.
+
+A file counts as watched when mpv reaches the end of it, or when you stop at 97.5% or later.
 
 ### Who writes the watch state
 
-Registering a session with the plugin is consent to the **server** writing
-watch state from the session's own state reports. So the two writers take
-turns rather than both running:
+When the companion is connected to a media session on the server, the server writes your watch state itself, based on what the companion reports. Two writers on the same record would fight, so they take turns:
 
-- **While a media session is connected, this companion's own scrobbling is
-  off.** It stops the moment the session registers, mid-item included — the
-  server has been watching the same playback through the state reports since
-  it registered, so it can finish a record it takes over.
-- **When the session goes away, scrobbling resumes at the next item, never
-  mid-item.** A watch record describes one whole viewing; taking one over at
-  80% would mark it watched on the strength of the last 20%. The item playing
-  when the session went away therefore syncs to whatever the server last
-  wrote and no further, which is correct — the server owned that viewing.
-- "Gone" means the hub client gave up its session, not that a socket
-  blinked: the connection retries indefinitely and reclaims its session id,
-  so a drop that reconnects changes nothing.
+- **While a media session is connected, the companion's own syncing is off.** It stops as soon as the session registers, even halfway through a video. That's safe, because the server has seen the same playback since the session started and can finish the record.
+- **When the session goes away, the companion takes over again at the next video, never halfway through one.** A watch record describes one viewing. If the companion took over at 80%, it would mark the video watched having seen only the last fifth. So the video that was playing when the session ended keeps whatever the server last wrote. The server owned that viewing.
+- **A dropped connection isn't the session going away.** The companion keeps reconnecting and reclaims the same session, so a network hiccup changes nothing.
 
-Both ends of the handover are logged (`PlaybackSessionManager`), because a
-handover that goes wrong is otherwise invisible until the watch state is
-already wrong.
+Both handovers are written to the log (`PlaybackSessionManager`), because a handover that goes wrong is otherwise invisible until your watch state already is.
 
----
+`PlaybackSyncingEnabled` only covers the companion's own syncing. Turning it off doesn't stop the server writing for a connected session. To stop both, use privacy mode with **Disable playback event syncing**.
 
-## Requirements
+### Privacy mode
 
-| Requirement | Notes |
-|---|---|
-| **A running Shoko Server** | v3 API reachable from this machine. |
-| **mpv** | Must be installed and discoverable (in `PATH` or a common install location). [mpv.io](https://mpv.io/installation/) |
-| **.NET 10 runtime** | Only if you run the framework-dependent build. |
-| **Discord desktop client** | Only if you enable Rich Presence. |
+Privacy mode can be switched from the tray menu, the settings window, or inside mpv (`Ctrl+p` by default). While it's on, the companion tells the server, which then hides what this device plays from everyone else and stops recording it. The server applies this per item and never turns it back off for an item once it's on. Nothing already recorded is removed.
 
----
-
-## Build & run
-
-```bash
-# from the repo root
-dotnet build Shoko.Companion/Shoko.Companion.csproj
-
-# run (framework-dependent)
-dotnet run --project Shoko.Companion/Shoko.Companion.csproj
-```
-
-### Single-file, self-contained publish (one binary per platform)
-
-```bash
-# Self-contained single-file (bundles .NET runtime)
-dotnet publish Shoko.Companion/Shoko.Companion.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-
-# Linux x64 / arm64 / macOS arm64 (change -r accordingly)
-dotnet publish ... -r linux-x64   -p:PublishSingleFile=true -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-dotnet publish ... -r linux-arm64 -p:PublishSingleFile=true -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-dotnet publish ... -r osx-arm64   -p:PublishSingleFile=true -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-```
-
-> Avalonia extracts its native libraries (Skia/HarfBuzz) to a temp directory on first run — this is expected.
-
----
+The sub-options decide what else privacy mode covers: hiding the title and poster from Discord, refusing remote screenshots, and stopping playback syncing altogether. You can also have privacy mode switch on by itself for restricted content.
 
 ## Configuration
 
-Settings live in a JSON file under a per-platform config root:
+Most people never need to touch the settings file: everything below can be set from the settings window. The file lives in a per-platform folder:
 
-| Platform | Location |
-|---|---|---|
+| Platform | Settings file |
+|---|---|
 | Windows | `%APPDATA%\shoko-companion\settings.json` |
 | macOS | `~/Library/Application Support/shoko-companion/settings.json` |
-| Linux | `$XDG_CONFIG_HOME/shoko-companion/settings.json` (falls back to `~/.config/shoko-companion/settings.json` if `XDG_CONFIG_HOME` is not set) |
+| Linux | `$XDG_CONFIG_HOME/shoko-companion/settings.json`, or `~/.config/shoko-companion/settings.json` if `XDG_CONFIG_HOME` isn't set |
 
-Logs are written next to it under `logs/`.
+Logs go in a `logs/` folder next to it. The companion notices when you edit the file by hand and reloads it.
 
-### Custom home directory
-
-Relocate the entire config/log root two ways (precedence: `--home` → env var → platform default):
+### Command line
 
 ```bash
-# --home argument
-shoko-companion --home /path/to/home
-
-# --force: bypass the running-instance check (e.g. after a crash left a stale lock file)
-shoko-companion --force
-
-# SHOKO_COMPANION_HOME environment variable
-SHOKO_COMPANION_HOME=/path/to/dev-home dotnet run --project Shoko.Companion/Shoko.Companion.csproj
+shoko-companion [--home <path>] [--force] [register | unregister | <url>]
 ```
+
+- `--home <path>` (or `--home=<path>`) keeps settings and logs in another folder. The `SHOKO_COMPANION_HOME` environment variable does the same. The argument wins over the variable, and either wins over the platform default.
+- `--force` starts even if a lock file says another instance is running. Use it after a crash leaves a stale lock behind.
+- `register` and `unregister` add or remove the `shoko://` link handler. If the companion isn't already running, it then starts as usual.
+- A `shoko:` (or plain `http://`/`https://`) URL is played or opened. If the companion is already running, the URL is handed to the running instance.
 
 ### `settings.json` reference
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `Connections` | array | `[]` | List of server connections (see below). |
-| `MpvPath` | string | `null` | Path to the mpv binary. Auto-discovered and saved on first use. |
-| `IsFullscreen` | bool | `true` | Saved current fullscreen state. Restored when mpv connects and persisted on every change. Replaces the old `MpvFullScreen` launch toggle. |
-| `OnNewUrlAction` | string | `"Append"` | When a new `shoko:` URL arrives while playing: `"Replace"` (stop + start new), `"Ignore"` (silently discard), or `"Append"` (add to mpv playlist). |
-| `PlaybackSyncingEnabled` | bool | `true` | Master toggle for the playback event syncing this companion does itself (start/end/pause/resume). Applies only while no media session is connected — see [Who writes the watch state](#who-writes-the-watch-state). |
-| `PlaybackSyncingBehavior` | enum | `AfterPlayback` | How aggressively to sync playback events: `AfterPlayback` (stop only), `OnEveryEvent` (play/pause/resume/stop), `LiveSync` (everything + periodic progress). |
-| `MediaSessionAutoConnectId` | Guid | `null` | Server connection ID to auto-connect for the Media Session SignalR hub. Null disables auto-connect. |
-| `SyncUserDataInitialSkipEventCount` | int | `3` | Number of initial non-pause events to skip after starting, letting the player settle. |
-| `SyncUserDataLiveScrobbleTickThreshold` | int | `3` | Number of position events accumulated before sending a live progress update. |
-| `SyncUserDataLivePositionThresholdMs` | int | `5000` | Minimum position change (ms) required to trigger a live progress update. |
-| `PrivacyModeForRestrictedContent` | bool | `false` | Auto-activate privacy mode for restricted content. |
-| `ScrobbleIntervalMs` | int | `10000` | How often to send progress updates (min 5000). |
-| `DiscordEnabled` | bool | `false` | Enable Discord Rich Presence. |
-| `DiscordClientIdOverride` | string | `null` | Override for the built-in Discord app ID. |
-| `DiscordIdlePresence` | bool | `false` | Show "Browsing" → "Idle" presence when nothing is playing. |
-| `PrivacyMode` | bool | `false` | Global privacy mode master switch. Sent to the Media Session plugin as `PrivacyModeEnabled`, which is what makes the server hide what this device plays from every other viewer and stop recording it. Turning it on mid-session reaches the server and privatises what is already queued. |
-| `PrivacyModeHideDiscord` | bool | `false` | Hide anime title and poster from Discord presence; show generic "Watching Anime" instead. Only effective when `PrivacyMode` is true. Local only — no server setting expresses rich presence. |
-| `PrivacyModeDisableRemoteScreenshots` | bool | `false` | Disallow remote screenshot capture via Media Session API. |
-| `PrivacyModeDisablePlaybackEvents` | bool | `false` | Disable all scrobble/sync events to the Shoko server. Also sent as `DisablePlaybackEventSyncing`, so it holds whether or not a Media Session is connected — the two scrobblers take turns, and telling only one leaves the other writing. |
-| `PrivacyModeForRestrictedContent` | bool | `false` | When true, restricted (adult) content automatically activates privacy mode. Also sent as `AlwaysUsePrivacyModeForRestrictedContent`, where the server rules what counts as restricted and applies it to items added after it, never backwards into the queue. |
-| `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv keybinding to toggle privacy mode during playback. Sent via JSON IPC; no Lua scripts needed. |
-| `MediaSessionEnabled` | bool | `false` | Global enabled switch for Media Session API integration. When disabled, auto-connect won't run and sub-controls are greyed out. |
-| `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Controls subtitle visibility during screenshots: `Disabled` (subs always visible), `OnlyWhenPaused` (hide subs only when paused — avoids visual flicker), `Always` (hide subs on every capture). |
-| `AlwaysUseConfiguredRoutes` | bool | `false` | Skip direct URL reachability check; always use the connection's route table. |
-| `LogLevel` | string | `"Info"` | One of: `Trace`, `Debug`, `Info`, `Warn`, `Error`. |
-
-Each connection object in `Connections`:
+Options that are enums are saved by name, as listed below.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `Name` | string | `""` | Display name for the connection (user-editable). |
-| `Routes` | array | `[]` | Ordered list of route objects (see below). Probed in order. |
-| `ApiKey` | string | `null` | API key for this server. |
-| `IgnoredManagedFolderIds` | array | `[]` | Managed folder IDs the user has silenced. |
-| `ManagedFolderMappings` | array | `[]` | Local path mappings for the server's managed folders. |
-| `CachedManagedFolders` | array | `null` | Cached folder metadata from the server (not persisted). |
+| `Connections` | array | `[]` | Server connections (see below). |
+| `OnNewUrlAction` | enum | `Append` | What a new link does while something plays: `Replace`, `Ignore` or `Append` (add to the playlist). |
+| `AlwaysUseConfiguredRoutes` | bool | `false` | Always go through the connection's routes instead of trying the address in the link first. Useful behind reverse proxies. |
+| `LastUsedServerUrl` | string | `null` | Last server address that worked. Set automatically; used by **Open WebUI**. |
+| `MpvPath` | string | `null` | Path to mpv. Found and saved on first use if empty. |
+| `MpvStartPaused` | bool | `false` | Start playback paused. |
+| `IsFullscreen` | bool | `true` | Fullscreen state, remembered between plays. |
+| `Volume` | int | `100` | Volume (0 to 130), remembered between plays. |
+| `Muted` | bool | `false` | Mute state, remembered between plays. |
+| `PlaybackSyncingEnabled` | bool | `true` | Sync playback to the server while no media session is connected. |
+| `PlaybackSyncingBehavior` | enum | `AfterPlayback` | `AfterPlayback`, `OnEveryEvent` or `LiveSync` (see above). |
+| `SyncUserDataInitialSkipEventCount` | int | `3` | Progress events to skip at the start, while the player settles. |
+| `SyncUserDataLiveScrobbleTickThreshold` | int | `6` | Live sync interval in 10-second ticks (1 to 60). The default is one update a minute. |
+| `MediaSessionEnabled` | bool | `false` | Use the server's media sessions. |
+| `MediaSessionAutoConnectId` | Guid | `null` | ID of the connection to join media sessions on at start-up. |
+| `AllowRemotePlay` | bool | `true` | Let other devices start and control playback here. |
+| `AllowRemoteVolumeControl` | bool | `true` | Let other devices change the volume and mute. |
+| `AllowRemoteScreenshot` | bool | `true` | Let other devices ask for a screenshot of the current frame. |
+| `AllowSessionHandoff` | bool | `true` | Let another device move what it's playing to this one. |
+| `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Hide subtitles in remote screenshots: `Disabled` (never), `OnlyWhenPaused` or `Always`. |
+| `DiscordEnabled` | bool | `false` | Show Discord Rich Presence. |
+| `DiscordClientIdOverride` | string | `null` | Your own Discord application ID instead of the built-in one. |
+| `DiscordIdlePresence` | bool | `false` | Show a "Browsing" presence when nothing plays. |
+| `DiscordButton1` | enum | `AniDB` | First presence button: `Disabled`, `AniDB`, `TMDB` or `TvdbOrImdb`. |
+| `DiscordButton2` | enum | `Disabled` | Second presence button, same choices. |
+| `PrivacyMode` | bool | `false` | Privacy mode on or off. |
+| `PrivacyModeHideDiscord` | bool | `false` | In privacy mode, show "Watching Anime" in Discord instead of the title and poster. |
+| `PrivacyModeDisableRemoteScreenshots` | bool | `false` | In privacy mode, refuse remote screenshots. |
+| `PrivacyModeDisablePlaybackEvents` | bool | `false` | In privacy mode, sync nothing, neither from the companion nor from the server on its behalf. |
+| `PrivacyModeForRestrictedContent` | bool | `false` | Switch privacy mode on by itself for restricted content. |
+| `PrivacyModeMpvKeybinding` | string | `Ctrl+p` | mpv key that toggles privacy mode. |
+| `SettingsMpvKeybinding` | string | `Ctrl+Shift+o` | mpv key that opens the companion's settings. |
+| `LogLevel` | string | `Info` | `Trace`, `Debug`, `Info`, `Warn` or `Error`. |
+| `UrlSchemeRegistrationAsked` | bool | `false` | Whether the first-run link handler prompt has been shown. |
 
-Each route object in `Routes`:
+Each entry in `Connections`:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `BaseUrl` | string | `""` | Host, port, and optional sub-path (e.g. `server:8111` or `192.168.1.5:8111/subpath`). No protocol prefix. |
-| `UseHttps` | bool | `false` | Whether to connect via HTTPS. |
+| `id` | Guid | new | Stable ID, referenced by `MediaSessionAutoConnectId`. |
+| `Name` | string | `""` | Display name. |
+| `Routes` | array | `[]` | Addresses for the server, tried in order (see below). |
+| `ApiKey` | string | `null` | API key for the server. |
+| `IgnoredManagedFolderIds` | array | `[]` | Managed folders you chose never to be asked about again. |
+| `ManagedFolderMappings` | array | `[]` | Local paths for the server's managed folders: `Id`, `Name`, `ServerPath`, `LocalPath`. |
 
-You can edit `settings.json` by hand (the app hot-reloads it) or via the tray menu.
+Each entry in `Routes`:
 
----
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `BaseUrl` | string | `""` | Host, port and optional sub-path, without the protocol, like `server:8111` or `192.168.1.5:8111/shoko`. |
+| `UseHttps` | bool | `false` | Use HTTPS instead of HTTP. |
 
-## Architecture
+## For developers
+
+### Building
+
+You need the .NET 10 SDK.
+
+```bash
+dotnet build Shoko.Companion/Shoko.Companion.csproj
+dotnet run --project Shoko.Companion/Shoko.Companion.csproj
+dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj
+```
+
+The project publishes as a single file. To get the same self-contained binary the releases use:
+
+```bash
+dotnet publish Shoko.Companion/Shoko.Companion.csproj -c Release -r linux-x64 \
+  -p:PublishSingleFile=true -p:SelfContained=true \
+  -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+```
+
+Swap the runtime identifier for `linux-arm64`, `win-x64` or `osx-arm64`. Avalonia unpacks its native libraries (Skia, HarfBuzz) to a temporary folder on first start; that's expected.
+
+The installers are built by `.github/workflows/release.yml` when a release is published: Inno Setup for Windows (`packaging/win/installer.iss`, which also registers `shoko://`), an AppImage for Linux (`packaging/linux/build.sh`) and a `.dmg` with an app bundle for macOS (`packaging/osx/build.sh`, whose `Info.plist` declares the `shoko` URL scheme). `scripts/package.sh` builds what a Linux machine can: the AppImages, plus plain archives for Windows and macOS.
+
+### Architecture
 
 ```
-shoko: URL ──▶ DispatchUrl ──┬─▶ PlaybackCoordinator
-                             │          │
-                             │    ┌─────┼────────┬──────────────┐
-                             │    ▼     ▼        ▼              ▼
-                             │   Api   Mpv     Discord      Notifications
-                             │  Client IPC     Presence
-                             │
-                             └─▶ FolderActionHandler
-                                     │
-                                     ▼
-                                File Manager
+shoko: URL ──▶ App.DispatchUrl ──┬─▶ PlaybackCoordinator ──┬─▶ ShokoApiClient
+                                 │                         ├─▶ MpvIpcClient
+                                 │                         ├─▶ PlaybackSessionManager (syncing, Discord)
+                                 │                         └─▶ MediaSessionClient (SignalR)
+                                 │
+                                 └─▶ FolderActionHandler ──▶ file manager
 ```
 
-- **`DispatchUrl`** (in `App`) parses the incoming URL and routes `play` to `PlaybackCoordinator` and `open-folder` to `FolderActionHandler`.
-- **`PlaybackCoordinator`** orchestrates everything: resolves the playlist JSON, pre-fetches resume position, forwards the stream URL to mpv, observes mpv state, and syncs playback events.
-- **`MpvIpcClient`** speaks mpv's JSON IPC and raises typed property/event callbacks.
-- **`ShokoApiClient`** wraps the v3 endpoints (`/api/auth`, `/api/v3/Playlist/Generate`, `/api/v3/File/{id}/UserData`, `/api/v3/File/{id}/Scrobble`).
-- **`ShokoUrlParser`** handles both legacy and new URL formats.
-- **`FolderActionHandler`** resolves managed folder IDs to local paths and opens the OS file manager.
-- **`SingleInstanceManager`** ensures only one instance runs and forwards URLs to it.
+- **`ShokoUrlParser`** turns a `shoko:` URL into an action (`play` or `open-folder`) and finds or creates the matching connection.
+- **`App.DispatchUrl`** sends `play` to `PlaybackCoordinator` and `open-folder` to `FolderActionHandler`.
+- **`PlaybackCoordinator`** fetches the playlist (`/api/v3/Playlist/Generate`), starts mpv with JSON IPC, restores the resume position, volume and fullscreen state, and follows mpv's state.
+- **`PlaybackSessionManager`** decides what to sync and when, and builds the Discord presence.
+- **`ShokoApiClient`** talks to the server: `/api/auth`, `/api/v3/File/{id}/UserData`, `/api/v3/File/{id}/Scrobble`, `/api/v3/File/{id}/Stream`, `/api/v3/ManagedFolder` and `/api/v3/Plugin/Features`. Servers are probed through `/api/v3/Init/Version`.
+- **`MediaSessionClient`** finds the `media-sessions` feature through `/api/v3/Plugin/Features`, connects to the hub path the server gives, registers the session and relays remote commands. It never hardcodes a plugin name or route.
+- **`MpvIpcClient`** speaks mpv's JSON IPC over a Unix socket or named pipe.
+- **`FolderActionHandler`** maps managed folder IDs or server paths to local folders and opens them.
+- **`SingleInstanceManager`** keeps one instance running and forwards URLs to it over a named pipe.
+- **`PlatformNotificationService`** shows notifications through `notify-send` (Linux), PowerShell (Windows) or `osascript` (macOS).
 
-See **[USAGE.md](./USAGE.md)** for the step-by-step user guide.
+[AGENTS.md](./AGENTS.md) has the detailed notes on the media session protocol, stream URLs and the reasoning behind them.
 
----
+### Debugging
 
-## Development & debugging
+`.vscode/launch.json` has two launch targets:
 
-The repo ships VS Code targets (`.vscode/launch.json`):
+- **Launch shoko-companion** starts it plainly. With no connections, the settings window opens.
+- **Launch shoko-companion (with URL)** passes a sample `shoko:` URL so you can step through the whole flow.
 
-- **Launch Shoko.Companion** — plain run (shows the connection setup window on first run).
-- **Launch Shoko.Companion (with URL)** — passes a sample `shoko:` URL so you can step through the full flow.
+Both set `SHOKO_COMPANION_HOME=${workspaceFolder}/companion-dev`, so debugging never touches your real settings.
 
-Both use `SHOKO_COMPANION_HOME=${workspaceFolder}/companion-dev` so debugging stays isolated from your real config.
-
-### URL scheme forwarding during development
-
-With the debug companion running, right-click the tray icon and choose
-**Register URL Scheme**. This registers the debug executable (with its
-`--home <dev-home>` baked in) as the `shoko://` handler.
-
-Whenever a `shoko://` link is clicked in your browser, the registered
-handler launches a secondary instance that immediately forwards the URL
-to the running debug session via the named pipe and exits — a lightweight
-trampoline. If nothing is running, one starts up.
-
-When you're done, unregister to restore the production handler — either
-from the tray menu or the command line:
+To send real `shoko://` clicks to the debug build, open the settings window and press **Register** under **URL Scheme**. That registers the debug executable, with its custom home baked in, as the link handler. A click then starts a second instance, which hands the URL to the running debug session and exits. When you're done, unregister it the same way, or from the command line:
 
 ```bash
 dotnet run --project Shoko.Companion/Shoko.Companion.csproj -- unregister
 ```
 
-Run the tests:
-
-```bash
-dotnet test Shoko.Companion.Tests/Shoko.Companion.Tests.csproj
-```
-
----
-
 ## Acknowledgements
 
-Shoko Companion would not exist without these amazing projects:
+Shoko Companion builds on these projects:
 
-- **[Shoko Server](https://shokoanime.com/)** — the anime metadata server that powers the entire ecosystem. This companion is just a sidekick.
-- **[mpv](https://mpv.io/)** — the best media player, with a beautiful JSON IPC that makes programmatic control a joy.
-- **[Avalonia](https://avaloniaui.net/)** — cross-platform UI framework that lets us target Windows, Linux, and macOS from one codebase. Underpinned by **Skia** and **HarfBuzz**.
-- **[DiscordRichPresence](https://github.com/Lachee/discord-rpc-csharp)** by Lachee — clean C# bindings for Discord's Rich Presence SDK.
-- **[NLog](https://nlog-project.org/)** — structured logging that matches the server's JSONL format.
-- **[Newtonsoft.Json](https://www.newtonsoft.com/json)** — the de facto JSON library for .NET.
-- **[xunit](https://xunit.net/)** and **[Moq](https://github.com/devlooped/moq)** — testing and mocking, keeping things solid.
-- **[.NET](https://dotnet.microsoft.com/)** — the runtime and ecosystem that makes cross-platform desktop apps viable.
-
----
+- [Shoko Server](https://shokoanime.com/), which does the real work. The companion is just a sidekick.
+- [mpv](https://mpv.io/), whose JSON IPC makes it easy to drive from another program.
+- [Avalonia](https://avaloniaui.net/), for one UI codebase across Windows, Linux and macOS, on top of Skia and HarfBuzz.
+- [DiscordRichPresence](https://github.com/Lachee/discord-rpc-csharp) by Lachee, the C# bindings for Discord Rich Presence.
+- [NLog](https://nlog-project.org/), for logs in the same JSONL format as the server.
+- [Newtonsoft.Json](https://www.newtonsoft.com/json), for JSON handling.
+- [ASP.NET Core SignalR](https://learn.microsoft.com/aspnet/core/signalr/), for the media session connection.
+- [xUnit](https://xunit.net/) and [Moq](https://github.com/devlooped/moq), for the tests.
+- [.NET](https://dotnet.microsoft.com/), which runs it all.
 
 ## License
 
