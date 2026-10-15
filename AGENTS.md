@@ -304,7 +304,6 @@ Stored as JSON at `{ConfigRoot}/settings.json`. Key fields:
   does itself, which is only what plays while no media session is connected
   (default `true`)
 - `PlaybackSyncingBehavior` — `AfterPlayback` / `OnEveryEvent` / `LiveSync` (default `AfterPlayback`)
-- `SkipRestrictedContent` — skip scrobbling for adult content (default `true`)
 - `DiscordEnabled`, `DiscordClientIdOverride`, `DiscordIdlePresence`
 - `PrivacyModeHideDiscord` (replaces `DiscordPrivacyMode`)
 
