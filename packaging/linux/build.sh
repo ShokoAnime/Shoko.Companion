@@ -28,6 +28,8 @@ mkdir -p "$BUILD_DIR/AppDir/usr/bin"
 cp "$PUBLISH_DIR/shoko-companion" "$BUILD_DIR/AppDir/usr/bin/shoko-companion"
 cp "$APPDIR/shoko-companion.desktop" "$BUILD_DIR/AppDir/"
 cp "$APPDIR/shoko-companion.png" "$BUILD_DIR/AppDir/"
+# The icon at the theme's standard sizes, which desktop integration installs as they are
+cp -r "$APPDIR/usr/share" "$BUILD_DIR/AppDir/usr/"
 
 # Create AppRun entry point
 cat > "$BUILD_DIR/AppDir/AppRun" <<'RUNEOF'
