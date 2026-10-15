@@ -43,9 +43,22 @@ public static class UrlSchemeRegistrar
     }
 
     private static string ExecutablePath =>
-        Environment.ProcessPath
-        ?? Process.GetCurrentProcess().MainModule?.FileName
+        ResolveExecutablePath(
+            Environment.GetEnvironmentVariable("APPIMAGE"),
+            Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName
+        )
         ?? throw new InvalidOperationException("Cannot determine executable path");
+
+    /// <summary>
+    /// The program to register. An AppImage runs from a mount that is gone once
+    /// it exits, so the AppImage file the runtime names in <c>APPIMAGE</c> is
+    /// registered instead of the process itself.
+    /// </summary>
+    /// <param name="appImage">The value of <c>APPIMAGE</c>, or <c>null</c>.</param>
+    /// <param name="processPath">The running executable's path, or <c>null</c>.</param>
+    /// <returns>The path to register, or <c>null</c> when neither is known.</returns>
+    internal static string? ResolveExecutablePath(string? appImage, string? processPath)
+        => string.IsNullOrWhiteSpace(appImage) ? processPath : appImage;
 
     /// <summary>
     /// The quoted launcher portion of the registered command.
