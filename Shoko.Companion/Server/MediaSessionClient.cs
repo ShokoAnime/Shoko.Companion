@@ -35,6 +35,18 @@ public sealed class MediaSessionClient : IAsyncDisposable
     private PlaybackStateUpdateDto? _lastState;
     private PlaybackStateUpdateDto? _reportedState;
     private CancellationTokenSource? _stoppedTimerCts;
+
+    /// <summary>
+    ///   Guards <see cref="_sendTail"/>, and makes taking a report's place
+    ///   in the queue one step with recording it as <see cref="_lastState"/>.
+    /// </summary>
+    private readonly object _sendLock = new();
+
+    /// <summary>
+    ///   The last send queued, which the next one waits for. See
+    ///   <see cref="EnqueueSend"/>.
+    /// </summary>
+    private Task _sendTail = Task.CompletedTask;
     private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(10);
     private PlaybackState _playbackState;
 
@@ -76,6 +88,20 @@ public sealed class MediaSessionClient : IAsyncDisposable
             _ = UpdateCapabilitiesOnHubAsync();
         }
     }
+
+    /// <summary>
+    ///   Replaces the hub connection for every send this client queues, so
+    ///   the tests can watch what goes out, and in what order, without a
+    ///   server. <c>null</c>, the default, sends over the connection.
+    /// </summary>
+    internal Func<string, object?[], Task>? HubSendOverride { get; set; }
+
+    /// <summary>
+    ///   Whether there is a registered session to send to.
+    /// </summary>
+    private bool CanSend
+        => _sessionId is not null
+            && (HubSendOverride is not null || _connection?.State == HubConnectionState.Connected);
 
     /// <summary>
     /// Raised when the connection state changes.
@@ -550,6 +576,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   Report playback state to the hub.
     ///
     ///   <para>
+    ///     Reports go out in the order they were made, through
+    ///     <see cref="EnqueueSend"/>. Each one used to be its own
+    ///     fire-and-forget task that awaited a capability push before
+    ///     sending, so a report held up there could be overtaken by a newer
+    ///     one and land after it, leaving the server on the older state.
+    ///     Since Kaname #335 the server applies no command itself and
+    ///     believes what is reported, so the last report to arrive is the
+    ///     state it shows.
+    ///   </para>
+    ///   <para>
     ///     The capability declaration is brought up to date first, and
     ///     that ordering is the point rather than an accident. Several of
     ///     the flags are computed from things that move without anybody
@@ -563,31 +599,52 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   </para>
     ///   <para>
     ///     Callers hand in the whole picture and what goes out is only what
-    ///     moved — see <see cref="PatchToSend"/>. The whole picture is what
-    ///     <see cref="_lastState"/> keeps, because that is the payload a
-    ///     registration or a reclaim carries, and a baseline cannot be
-    ///     described in deltas.
+    ///     moved — see <see cref="PatchToSend"/>, which runs in the queue,
+    ///     so each patch is taken against the report sent just before it.
+    ///     The whole picture is what <see cref="_lastState"/> keeps, recorded
+    ///     here in call order, because that is the payload a registration or
+    ///     a reclaim carries, and a baseline cannot be described in deltas.
     ///   </para>
     /// </summary>
     /// <param name="state">The current playback state to report.</param>
-    public async Task ReportStateAsync(PlaybackStateUpdateDto state)
+    /// <returns>A task that completes once this report has been sent.</returns>
+    public Task ReportStateAsync(PlaybackStateUpdateDto state)
     {
-        CancelStoppedTimer();
-        // The whole picture minus the seek: this is the baseline a
-        // registration or a reclaim carries, and a seek is an event, so
-        // carried there it would be a seek replayed on every reconnect.
-        _lastState = state.WithoutSeek();
+        lock (_sendLock)
+        {
+            // The whole picture minus the seek: this is the baseline a
+            // registration or a reclaim carries, and a seek is an event, so
+            // carried there it would be a seek replayed on every reconnect.
+            _lastState = state.WithoutSeek();
 
-        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+            // Decided now, in call order, rather than once the send is done:
+            // a newer report queued behind a Stopped one has already said
+            // something else, and the timer must not outlive it.
+            CancelStoppedTimer();
+            if (CanSend && state.State == PlaybackState.Stopped.ToWireName())
+                StartStoppedTimer();
+
+            return EnqueueSend(() => SendStateAsync(state));
+        }
+    }
+
+    /// <summary>
+    ///   Send one report, from inside the queue: the declaration first,
+    ///   then the patch against the report sent before it.
+    /// </summary>
+    /// <param name="state">The whole picture, as the caller built it.</param>
+    private async Task SendStateAsync(PlaybackStateUpdateDto state)
+    {
+        if (!CanSend)
             return;
 
-        await UpdateCapabilitiesOnHubAsync();
+        await SendCapabilitiesAsync(force: false);
 
         if (PatchToSend(state) is { } patch)
         {
             try
             {
-                await _connection.InvokeAsync("UpdateState", patch);
+                await InvokeHubAsync("UpdateState", patch);
             }
             catch (Exception ex)
             {
@@ -597,12 +654,59 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Logger.Debug(ex, "MediaSession: Failed to report state");
             }
         }
-
-        // If playback just stopped, schedule an auto-transition to Idle
-        // after a grace period. Any new play/pause/resume cancels it.
-        if (state.State == PlaybackState.Stopped.ToWireName())
-            StartStoppedTimer();
     }
+
+    /// <summary>
+    ///   Queue a send behind every send queued before it, so the hub hears
+    ///   this client in the order it spoke.
+    ///
+    ///   <para>
+    ///     One queue for everything this client sends unprompted: state,
+    ///     playlist, capabilities and settings. SignalR keeps the order of
+    ///     what is written to one connection, but each of these awaits
+    ///     something before it writes, and the order they reach the wire
+    ///     in was whichever await finished first. A send that fails is
+    ///     logged by the send itself and does not hold up the ones behind
+    ///     it.
+    ///   </para>
+    /// </summary>
+    /// <param name="send">The send, started once every earlier one is done.</param>
+    /// <returns>A task that completes once this send has finished.</returns>
+    private Task EnqueueSend(Func<Task> send)
+    {
+        lock (_sendLock)
+        {
+            var next = SendAfterAsync(_sendTail, send);
+            _sendTail = next;
+            return next;
+        }
+    }
+
+    private static async Task SendAfterAsync(Task previous, Func<Task> send)
+    {
+        // Never faults: every send passes through here, and this catches.
+        await previous.ConfigureAwait(false);
+        // Off the caller's stack, and out from under the lock it holds.
+        await Task.Yield();
+
+        try
+        {
+            await send().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "MediaSession: Queued send failed");
+        }
+    }
+
+    /// <summary>
+    ///   Invoke a hub method, over the connection or
+    ///   <see cref="HubSendOverride"/>.
+    /// </summary>
+    private Task InvokeHubAsync(string method, params object?[] args)
+        => HubSendOverride is { } send
+            ? send(method, args)
+            : _connection!.InvokeCoreAsync(method, args);
 
     /// <summary>
     ///   What to actually put on the wire for <paramref name="state"/>:
@@ -640,14 +744,17 @@ public sealed class MediaSessionClient : IAsyncDisposable
     /// <param name="items">
     ///   The full playlist items in order. Pass an empty list when idle.
     /// </param>
-    public async Task ReportPlaylistAsync(IReadOnlyList<MediaItemInfoDto> items)
+    public Task ReportPlaylistAsync(IReadOnlyList<MediaItemInfoDto> items)
+        => EnqueueSend(() => SendPlaylistAsync(items));
+
+    private async Task SendPlaylistAsync(IReadOnlyList<MediaItemInfoDto> items)
     {
-        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+        if (!CanSend)
             return;
 
         try
         {
-            await _connection.InvokeAsync("UpdatePlaylist", items);
+            await InvokeHubAsync("UpdatePlaylist", items);
         }
         catch (Exception ex)
         {
@@ -900,9 +1007,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   Send even when the declaration matches the last one accepted.
     ///   Used after a reconnect, where what the server holds is not known.
     /// </param>
-    public async Task UpdateCapabilitiesOnHubAsync(bool force = false)
+    public Task UpdateCapabilitiesOnHubAsync(bool force = false)
+        => EnqueueSend(() => SendCapabilitiesAsync(force));
+
+    /// <summary>
+    ///   The capability push itself, run from inside the send queue. A
+    ///   state report calls it directly, being in the queue already.
+    /// </summary>
+    private async Task SendCapabilitiesAsync(bool force)
     {
-        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+        if (!CanSend)
             return;
 
         var caps = BuildCurrentCapabilities(_playbackState);
@@ -911,7 +1025,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("UpdateCapabilities", caps);
+            await InvokeHubAsync("UpdateCapabilities", caps);
             _lastSentCapabilities = caps;
         }
         catch (Exception ex)
@@ -947,9 +1061,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   Send even when the declaration matches the last one accepted.
     ///   Used after a reconnect, where what the server holds is not known.
     /// </param>
-    public async Task UpdateSettingsOnHubAsync(bool force = false)
+    public Task UpdateSettingsOnHubAsync(bool force = false)
+        => EnqueueSend(() => SendSettingsAsync(force));
+
+    private async Task SendSettingsAsync(bool force)
     {
-        if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
+        if (!CanSend)
             return;
 
         var settings = BuildCurrentSettings();
@@ -958,7 +1075,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("UpdateSettings", settings);
+            await InvokeHubAsync("UpdateSettings", settings);
             _lastSentSettings = settings;
             Logger.Debug(
                 "MediaSession: Settings pushed (privacy={Privacy}, "
