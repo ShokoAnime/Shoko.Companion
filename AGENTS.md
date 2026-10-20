@@ -221,6 +221,36 @@ from it, and an episode watched to the end was stored as watched for 5 ms
   different item than the one measured gets 0, which covers mpv moving its
   playlist on before the next file's first `time-pos`. The null used to
   zero this by accident.
+- **A file that played to its end is at its end.** The last real position
+  is the last frame's timestamp, up to a frame short of the duration, and
+  Shoko's completion threshold is a server setting that goes up to 100%:
+  there, a file watched to the very end was never marked watched. revam,
+  2026-10-20: *"round it up on the last frame if needed. that's a bug if
+  anything."* So once mpv says the file ended, `PlaybackSession.ReportedPositionMs`
+  is the larger of the last real position and the duration, and everything
+  that reports or scrobbles a position reads it: the kept position, the
+  state reports, the `Stopped` one, the tick, and the companion's own
+  `PlaybackEnd` from `FinalizeCurrentFile` and `EndSession`. The duration is
+  the session's `DurationMs`, Shoko's own figure for the file, set per file
+  at `StartSession` / `OnNextFile`; mpv's `duration` property is not
+  observed at all, and the coordinator's `_duration` is zeroed by
+  `StopAsync`. An unknown duration (0) leaves the last real position, and
+  the position is never lowered. `PositionMs` stays the measurement.
+
+  "mpv says the file ended" is `OnEofReached`, and three things call it,
+  because `--keep-open` (which `MpvProcess.Launch` passes) means the
+  **last** file of a playlist gets no `end-file` at all — mpv pauses on its
+  last frame instead:
+  - `end-file` with reason `eof`, which is how every file but the last ends;
+  - `eof-reached` going true, which is how the last one ends;
+  - the end-of-file pause the coordinator stops on, because that pause can
+    arrive before `eof-reached` does. It is also what a viewer pausing in
+    the last 300 ms gets, which the coordinator already treats as the end.
+
+  A `stop`, `quit`, `error` or `redirect` end, which includes a playlist
+  move the viewer made, is not one of them. `OnNextFile` clears the flag,
+  and `ReportablePositionMs` still gives a report naming the next item 0,
+  so the duration never travels onto it.
 
 Omitting an unknown position would be the patch-shaped answer, but
 `_lastState` is the payload a registration or a reclaim carries and the

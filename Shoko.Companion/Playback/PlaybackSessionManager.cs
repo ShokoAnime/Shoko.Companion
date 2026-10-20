@@ -197,16 +197,17 @@ public class PlaybackSessionManager
     ///   <see cref="LastKnownPositionMs"/>, which a 0 here would contradict
     ///   the moment the session ends.
     /// </summary>
-    public double CurrentPositionMs => _session?.PositionMs ?? 0;
+    public double CurrentPositionMs => _session?.ReportedPositionMs ?? 0;
 
     /// <summary>
     ///   The last real position measured, in milliseconds: the current
     ///   session's, or once it has ended the position it ended at, until the
     ///   next <see cref="StartSession"/>. <c>null</c> when nothing has been
-    ///   measured yet. Read with <see cref="PositionVideoId"/>, which says
-    ///   which file it belongs to.
+    ///   measured yet. A file that played to its end is at its duration
+    ///   rather than its last frame. Read with <see cref="PositionVideoId"/>,
+    ///   which says which file it belongs to.
     /// </summary>
-    public double? LastKnownPositionMs => _session?.PositionMs ?? _ended?.PositionMs;
+    public double? LastKnownPositionMs => _session?.ReportedPositionMs ?? _ended?.PositionMs;
 
     /// <summary>
     ///   The file <see cref="LastKnownPositionMs"/> was measured on.
@@ -323,7 +324,7 @@ public class PlaybackSessionManager
             _scrobbleTimer?.Change(Timeout.Infinite, Timeout.Infinite);
 
             if (ShouldSendEvent(isPauseOrResume: true))
-                EmitPlaybackEvent(ScrobbleEventType.PlaybackPause, _session.PositionMs, watched: null);
+                EmitPlaybackEvent(ScrobbleEventType.PlaybackPause, _session.ReportedPositionMs, watched: null);
         }
         else if (!isPaused && wasPaused)
         {
@@ -333,14 +334,19 @@ public class PlaybackSessionManager
             _session.ScrobbleTickCount = 0;
 
             if (ShouldSendEvent(isPauseOrResume: true))
-                EmitPlaybackEvent(ScrobbleEventType.PlaybackResume, _session.PositionMs, watched: null);
+                EmitPlaybackEvent(ScrobbleEventType.PlaybackResume, _session.ReportedPositionMs, watched: null);
         }
 
         EmitDiscordPresence();
     }
 
     /// <summary>
-    /// Called when mpv hits end-of-file naturally.
+    ///   Called when mpv says the file played to its end: <c>end-file</c>
+    ///   with reason <c>eof</c>, <c>eof-reached</c> going true under
+    ///   <c>--keep-open</c>, or the pause at the end that the coordinator
+    ///   reads as either. From here the file counts as watched, and its
+    ///   position is its duration (see
+    ///   <see cref="PlaybackSession.ReportedPositionMs"/>).
     /// </summary>
     public void OnEofReached()
     {
@@ -408,7 +414,7 @@ public class PlaybackSessionManager
         }
 
         var fileId = _session.VideoId;
-        var position = _session.PositionMs;
+        var position = _session.ReportedPositionMs;
         var isRestricted = _session.IsRestricted;
         var videoStreamOrdinal = _session.VideoStreamOrdinal;
         var audioStreamOrdinal = _session.AudioStreamOrdinal;
@@ -479,7 +485,7 @@ public class PlaybackSessionManager
         }
 
         var fileId = _session.VideoId;
-        var position = _session.PositionMs;
+        var position = _session.ReportedPositionMs;
         var isRestricted = _session.IsRestricted;
         var videoStreamOrdinal = _session.VideoStreamOrdinal;
         var audioStreamOrdinal = _session.AudioStreamOrdinal;
@@ -564,7 +570,7 @@ public class PlaybackSessionManager
 
         // Fire position tick on every timer beat so the media session hub
         // gets regular position updates even when the scrobble is throttled.
-        var pos = TimeSpan.FromMilliseconds(session.PositionMs);
+        var pos = TimeSpan.FromMilliseconds(session.ReportedPositionMs);
         Task.Run(() => PositionTick?.Invoke(this, pos));
 
         if (_session is null || _session.IsPaused)
@@ -598,7 +604,7 @@ public class PlaybackSessionManager
 
         // Only send live progress when behavior is LiveSync
         if (SettingsProvider.Instance.Settings.PlaybackSyncingBehavior is PlaybackSyncingBehavior.LiveSync)
-            EmitPlaybackEvent(ScrobbleEventType.PlaybackProgress, _session.PositionMs, watched: null);
+            EmitPlaybackEvent(ScrobbleEventType.PlaybackProgress, _session.ReportedPositionMs, watched: null);
     }
 
     /// <summary>
@@ -763,6 +769,25 @@ public class PlaybackSessionManager
         public bool IsPaused;
         public bool IsRestricted;
         public bool EofReached;
+
+        /// <summary>
+        ///   The position to report and to scrobble: the last real one, or
+        ///   once the file has played to its end, its duration, whichever is
+        ///   larger.
+        ///
+        ///   <para>
+        ///     The last real position is the timestamp of the last frame,
+        ///     which sits up to a frame short of the duration. The server
+        ///     marks a file watched by comparing position to duration
+        ///     against a threshold that can be set to 100%, where a file
+        ///     watched to the very end would then never count. So the end
+        ///     of a file is reported as the end. Never lower than what was
+        ///     measured, and left alone when the duration is unknown.
+        ///     <see cref="PositionMs"/> stays the measurement.
+        ///   </para>
+        /// </summary>
+        public double ReportedPositionMs
+            => EofReached && DurationMs > 0 ? Math.Max(PositionMs, DurationMs) : PositionMs;
 
         public string? SeriesTitle;
         public string? EpisodeTitle;

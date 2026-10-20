@@ -1522,6 +1522,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 {
                     Logger.Info("End-of-file pause detected (pos={Pos:F0}, dur={Dur:F0}) — stopping",
                         _sessionManager.CurrentPositionMs, _duration);
+                    // Under --keep-open this pause is how the last file of a
+                    // playlist ends: mpv sends no end-file for it, and the
+                    // pause can arrive before eof-reached does. The file
+                    // played to its end, so it is reported at its end.
+                    _sessionManager.OnEofReached();
                     _ = StopAsync();
                 }
                 else
@@ -2125,6 +2130,13 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 Logger.Info("mpv end-file: {Reason}", reason);
                 if (reason == "eof")
                 {
+                    // The file played to its end, so from here it is at its
+                    // end: the last frame sits short of the duration, and at
+                    // a 100% completion threshold that is not watched. Only
+                    // an eof: a stop, a quit, an error or a playlist move the
+                    // viewer made is not the end of the file.
+                    _sessionManager.OnEofReached();
+
                     // Emit stop scrobble for the file that just ended before we
                     // transition to the next one. This ensures every file in a
                     // multi-item playlist gets its PlaybackEnd event.

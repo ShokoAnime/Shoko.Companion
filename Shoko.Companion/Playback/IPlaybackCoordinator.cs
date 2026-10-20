@@ -58,7 +58,8 @@ public interface IPlaybackCoordinator
     ///   position of the item being reported, which outlives the session
     ///   ending so the <c>Stopped</c> report does not say 0. A position
     ///   mpv cannot give, such as a file unloaded at its end, leaves the
-    ///   last real one standing.
+    ///   last real one standing, and a file that played to its end is at
+    ///   its duration when that is known.
     /// </summary>
     double CurrentPositionSeconds { get; }
 

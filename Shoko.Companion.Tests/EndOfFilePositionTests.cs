@@ -10,6 +10,7 @@ using Shoko.Companion.Mpv;
 using Shoko.Companion.Notifications;
 using Shoko.Companion.Playback;
 using Shoko.Companion.Server;
+using Shoko.Companion.Server.Models;
 using Xunit;
 
 namespace Shoko.Companion.Tests;
@@ -28,6 +29,15 @@ namespace Shoko.Companion.Tests;
 ///     because it is built after the session object is gone.
 ///   </para>
 ///   <para>
+///     And a file that played to its end is reported <em>at</em> its end.
+///     The last real position is the last frame's timestamp, up to a frame
+///     short of the duration, and at a 100% completion threshold on the
+///     server that is a file watched to the very end and never marked
+///     watched. So on a real end of file the position becomes the
+///     duration, never lower than what was measured, and only when the
+///     duration is known.
+///   </para>
+///   <para>
 ///     Every failure here is silent in production: nothing errors, the
 ///     watch state is just wrong.
 ///   </para>
@@ -41,6 +51,8 @@ public class EndOfFilePositionTests : IDisposable
 
     private readonly bool _syncingEnabled;
     private readonly bool _discordEnabled;
+    private readonly int _skipCount;
+    private readonly bool _privacyMode;
 
     private readonly Mock<IMpvController> _mpv = new();
     private readonly PlaybackSessionManager _manager = new();
@@ -52,6 +64,8 @@ public class EndOfFilePositionTests : IDisposable
         var s = SettingsProvider.Instance.Settings;
         _syncingEnabled = s.PlaybackSyncingEnabled;
         _discordEnabled = s.DiscordEnabled;
+        _skipCount = s.SyncUserDataInitialSkipEventCount;
+        _privacyMode = s.PrivacyMode;
         s.DiscordEnabled = false;
         // The bug's own setting: the server owns the viewing, so the
         // companion's reports are the only account of it.
@@ -72,6 +86,8 @@ public class EndOfFilePositionTests : IDisposable
         var s = SettingsProvider.Instance.Settings;
         s.PlaybackSyncingEnabled = _syncingEnabled;
         s.DiscordEnabled = _discordEnabled;
+        s.SyncUserDataInitialSkipEventCount = _skipCount;
+        s.PrivacyMode = _privacyMode;
         s.RestrictedContentPlaying = false;
         GC.SuppressFinalize(this);
     }
@@ -86,10 +102,18 @@ public class EndOfFilePositionTests : IDisposable
     private static object? Wire(string json)
         => JObject.Parse(json)["data"]!.ToObject<object>();
 
+    private static string StreamUrl(int videoId) => $"http://shoko.test/api/v3/File/{videoId}/Stream";
+
+    /// <summary>mpv's <c>playlist</c> property: two files, one current.</summary>
+    private static JArray Playlist(int currentVideoId)
+        => new(
+            new JObject { ["filename"] = StreamUrl(VideoId), ["title"] = "Episode 1", ["current"] = currentVideoId == VideoId },
+            new JObject { ["filename"] = StreamUrl(VideoId + 1), ["title"] = "Episode 2", ["current"] = currentVideoId == VideoId + 1 });
+
     /// <summary>A session playing video 29529, as the coordinator sees it.</summary>
-    private void StartPlaying()
+    private void StartPlaying(double durationMs = DurationMs)
     {
-        _manager.StartSession(VideoId, 0, DurationMs, false, "Series", "Episode", 1, 1, 12, null, 1);
+        _manager.StartSession(VideoId, 0, durationMs, false, "Series", "Episode", 1, 1, 12, null, 1);
         Property("time-pos", LastRealSeconds);
         Property("pause", false);
         Assert.Equal(PlaybackState.Playing, _coordinator.CurrentState);
@@ -174,7 +198,7 @@ public class EndOfFilePositionTests : IDisposable
     }
 
     [Fact]
-    public void EndOfFile_StoppedReportCarriesTheLastRealPosition()
+    public void EndOfFile_StoppedReportCarriesTheDuration()
     {
         StartPlaying();
 
@@ -184,8 +208,85 @@ public class EndOfFilePositionTests : IDisposable
         Event("end-file", JObject.Parse("""{"reason":"eof"}"""));
 
         var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
-        Assert.Equal(LastRealSeconds, stopped.PositionSeconds, 3);
+        Assert.Equal(DurationMs / 1000, stopped.PositionSeconds, 3);
+        Assert.Equal(DurationMs, _manager.LastKnownPositionMs);
+        Assert.Equal(VideoId, _manager.PositionVideoId);
         Assert.DoesNotContain(_reports, r => r.PositionSeconds == 0);
+    }
+
+    [Theory]
+    [InlineData("stop")]
+    [InlineData("quit")]
+    [InlineData("error")]
+    [InlineData("redirect")]
+    public async Task EndThatIsNotEof_KeepsTheLastRealPosition(string reason)
+    {
+        StartPlaying();
+
+        Event("end-file", new JObject { ["reason"] = reason });
+        Assert.Equal(LastRealSeconds, _coordinator.CurrentPositionSeconds, 3);
+        await _coordinator.StopAsync();
+
+        var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
+        Assert.Equal(LastRealSeconds, stopped.PositionSeconds, 3);
+        Assert.Equal(LastRealSeconds * 1000, _manager.LastKnownPositionMs!.Value, 3);
+    }
+
+    [Fact]
+    public void EndOfFile_DurationUnknown_KeepsTheLastRealPosition()
+    {
+        StartPlaying(durationMs: 0);
+
+        Property("time-pos", null);
+        Event("end-file", JObject.Parse("""{"reason":"eof"}"""));
+
+        var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
+        Assert.Equal(LastRealSeconds, stopped.PositionSeconds, 3);
+    }
+
+    [Fact]
+    public void EndOfFile_PastTheDuration_IsNotLowered()
+    {
+        StartPlaying();
+        // mpv's last frame can sit past what the server has for the file.
+        Property("time-pos", 1_420.5);
+
+        Event("end-file", JObject.Parse("""{"reason":"eof"}"""));
+
+        var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
+        Assert.Equal(1_420.5, stopped.PositionSeconds, 3);
+        Assert.Equal(1_420_500, _manager.LastKnownPositionMs!.Value, 3);
+    }
+
+    [Fact]
+    public async Task PlaylistAdvanceAfterEof_DoesNotCarryTheDurationOntoTheNextItem()
+    {
+        Property("playlist", Playlist(VideoId));
+        StartPlaying();
+
+        Event("end-file", JObject.Parse("""{"reason":"eof"}"""));
+
+        // More is queued, so the session carries on; the finished file is
+        // at its end for as long as a report names it.
+        Assert.NotEqual(PlaybackState.Stopped, _coordinator.CurrentState);
+        Assert.Equal(DurationMs / 1000, _coordinator.CurrentPositionSeconds, 3);
+
+        // mpv moves its playlist on before the next file's first time-pos.
+        _reports.Clear();
+        Property("playlist", Playlist(VideoId + 1));
+        Assert.Equal(VideoId + 1, _coordinator.CurrentItem?.VideoId);
+        var moved = Assert.Single(_reports);
+        Assert.Equal(0, moved.PositionSeconds);
+
+        // And once the next file is loaded, its position is its own.
+        Property("path", StreamUrl(VideoId + 1));
+        Assert.Equal(VideoId + 1, _manager.PositionVideoId);
+        Assert.Equal(0, _coordinator.CurrentPositionSeconds);
+
+        var tick = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _coordinator.PositionTick += (_, pos) => tick.TrySetResult(pos);
+        _manager.OnScrobbleTimer(null);
+        Assert.Equal(TimeSpan.Zero, await tick.Task.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -210,9 +311,11 @@ public class EndOfFilePositionTests : IDisposable
         Property("time-pos", null);
         Property("pause", true);
 
+        // Under --keep-open this pause is the end of the last file: mpv
+        // sends no end-file for it. So it ends at the duration too.
         Assert.Equal(PlaybackState.Stopped, _coordinator.CurrentState);
         var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
-        Assert.Equal(LastRealSeconds, stopped.PositionSeconds, 3);
+        Assert.Equal(DurationMs / 1000, stopped.PositionSeconds, 3);
     }
 
     [Fact]
@@ -225,6 +328,8 @@ public class EndOfFilePositionTests : IDisposable
         Property("pause", true);
 
         Assert.Equal(PlaybackState.Stopped, _coordinator.CurrentState);
+        var stopped = Assert.Single(_reports, r => r.State is PlaybackState.Stopped);
+        Assert.Equal(DurationMs / 1000, stopped.PositionSeconds, 3);
     }
 
     [Fact]
@@ -250,6 +355,84 @@ public class EndOfFilePositionTests : IDisposable
 
         Assert.Equal(VideoId + 1, _manager.PositionVideoId);
         Assert.Equal(5_000, _manager.LastKnownPositionMs);
+    }
+
+    /// <summary>
+    ///   A manager with no media session, so the companion scrobbles the
+    ///   viewing itself, and the <c>PlaybackEnd</c> it would send.
+    /// </summary>
+    private static PlaybackSessionManager OwnScrobbling(TaskCompletionSource<ScrobbleRequestEventArgs> end, double durationMs = DurationMs)
+    {
+        var s = SettingsProvider.Instance.Settings;
+        s.PlaybackSyncingEnabled = true;
+        s.PrivacyMode = false;
+        s.SyncUserDataInitialSkipEventCount = 0;
+
+        var manager = new PlaybackSessionManager();
+        manager.ScrobbleRequested += (_, e) =>
+        {
+            if (e.EventType is ScrobbleEventType.PlaybackEnd)
+                end.TrySetResult(e);
+        };
+        manager.StartSession(VideoId, 0, durationMs, false, "Series", "Episode", 1, 1, 12, null, 1);
+        manager.OnPositionChanged(LastRealSeconds * 1000);
+        return manager;
+    }
+
+    [Fact]
+    public async Task OwnScrobble_FileFinalizedAtEof_EndsAtTheDuration()
+    {
+        var end = new TaskCompletionSource<ScrobbleRequestEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = OwnScrobbling(end);
+
+        manager.OnEofReached();
+        manager.FinalizeCurrentFile();
+
+        var sent = await end.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(TimeSpan.FromMilliseconds(DurationMs), sent.Position);
+        Assert.True(sent.IsWatched);
+        manager.EndSession(manager.CurrentPositionMs);
+    }
+
+    [Fact]
+    public async Task OwnScrobble_SessionEndedAtEof_EndsAtTheDuration()
+    {
+        var end = new TaskCompletionSource<ScrobbleRequestEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = OwnScrobbling(end);
+
+        manager.OnEofReached();
+        manager.EndSession(manager.CurrentPositionMs);
+
+        var sent = await end.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(TimeSpan.FromMilliseconds(DurationMs), sent.Position);
+        Assert.True(sent.IsWatched);
+        Assert.Equal(DurationMs, manager.LastKnownPositionMs);
+    }
+
+    [Fact]
+    public async Task OwnScrobble_SessionEndedWithoutEof_EndsAtTheLastRealPosition()
+    {
+        var end = new TaskCompletionSource<ScrobbleRequestEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = OwnScrobbling(end);
+
+        manager.EndSession(manager.CurrentPositionMs);
+
+        var sent = await end.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(LastRealSeconds * 1000, sent.Position!.Value.TotalMilliseconds, 3);
+    }
+
+    [Fact]
+    public async Task OwnScrobble_EofWithTheDurationUnknown_EndsAtTheLastRealPosition()
+    {
+        var end = new TaskCompletionSource<ScrobbleRequestEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = OwnScrobbling(end, durationMs: 0);
+
+        manager.OnEofReached();
+        manager.EndSession(manager.CurrentPositionMs);
+
+        var sent = await end.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(LastRealSeconds * 1000, sent.Position!.Value.TotalMilliseconds, 3);
+        Assert.True(sent.IsWatched);
     }
 
     [Theory]
