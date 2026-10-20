@@ -75,10 +75,11 @@ public class PlaybackSessionManager
 
     /// <summary>
     ///   Raised on every scrobble timer tick (even when throttled), so the
-    ///   media session hub gets periodic position updates during playback.
-    ///   The argument is the current position as a <see cref="TimeSpan"/>.
+    ///   media session hub gets periodic position updates during playback,
+    ///   and from <see cref="OnSeek"/>, which marks its tick
+    ///   <see cref="PositionTickEventArgs.Seeked"/> when the seek landed.
     /// </summary>
-    public event EventHandler<TimeSpan>? PositionTick;
+    public event EventHandler<PositionTickEventArgs>? PositionTick;
 
     /// <summary>Raised when the Discord presence should be updated, or null to clear.</summary>
     public event EventHandler<DiscordPresenceData?>? DiscordPresenceChanged;
@@ -292,7 +293,13 @@ public class PlaybackSessionManager
     /// Called when mpv performs a seek. Syncs position and triggers a scrobble
     /// check immediately so the sync logic can evaluate the new position.
     /// </summary>
-    public void OnSeek(double positionMs)
+    /// <param name="positionMs">The position the seek went to.</param>
+    /// <param name="landed">
+    ///   Whether mpv has completed the seek and reported this position
+    ///   itself. Only then is the tick raised here a seek report; a seek
+    ///   that has merely been asked for moves the position without one.
+    /// </param>
+    public void OnSeek(double positionMs, bool landed = true)
     {
         if (_session is null)
             return;
@@ -303,8 +310,8 @@ public class PlaybackSessionManager
         if (!_session.IsPaused)
             _scrobbleTimer?.Change(ScrobbleIntervalMs, ScrobbleIntervalMs);
 
-        var pos = TimeSpan.FromMilliseconds(positionMs);
-        Task.Run(() => PositionTick?.Invoke(this, pos));
+        var tick = new PositionTickEventArgs(TimeSpan.FromMilliseconds(positionMs), landed);
+        Task.Run(() => PositionTick?.Invoke(this, tick));
     }
 
     /// <summary>
@@ -570,8 +577,8 @@ public class PlaybackSessionManager
 
         // Fire position tick on every timer beat so the media session hub
         // gets regular position updates even when the scrobble is throttled.
-        var pos = TimeSpan.FromMilliseconds(session.ReportedPositionMs);
-        Task.Run(() => PositionTick?.Invoke(this, pos));
+        var tick = new PositionTickEventArgs(TimeSpan.FromMilliseconds(session.ReportedPositionMs));
+        Task.Run(() => PositionTick?.Invoke(this, tick));
 
         if (_session is null || _session.IsPaused)
             return;

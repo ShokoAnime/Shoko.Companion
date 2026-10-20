@@ -47,6 +47,8 @@ When the companion is connected to a media session on the server, the server wri
 - **When the session goes away, the companion takes over again at the next video, never halfway through one.** A watch record describes one viewing. If the companion took over at 80%, it would mark the video watched having seen only the last fifth. So the video that was playing when the session ended keeps whatever the server last wrote. The server owned that viewing.
 - **A dropped connection isn't the session going away.** The companion keeps reconnecting and reclaims the same session, so a network hiccup changes nothing.
 
+The companion also tells the server whenever a seek lands: one you make in mpv, one sent from another device, and the jump to your resume position when a video starts. The server can then save your new position straight away instead of at its next periodic save.
+
 Both handovers are written to the log (`PlaybackSessionManager`), because a handover that goes wrong is otherwise invisible until your watch state already is.
 
 `PlaybackSyncingEnabled` only covers the companion's own syncing. Turning it off doesn't stop the server writing for a connected session. To stop both, use privacy mode with **Disable playback event syncing**.

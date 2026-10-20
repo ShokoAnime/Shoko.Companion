@@ -333,11 +333,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// </summary>
     public event EventHandler<PlaybackStateChangedEventArgs>? StateChanged;
 
-    /// <summary>
-    ///   Raised periodically (≈ every 10 s) during playback with the
-    ///   current position so the media session hub stays in sync.
-    /// </summary>
-    public event EventHandler<TimeSpan>? PositionTick;
+    /// <inheritdoc/>
+    public event EventHandler<PositionTickEventArgs>? PositionTick;
 
     /// <summary>
     ///   Raised when the current volume or mute state changes, so
@@ -403,9 +400,13 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         _sessionManager.DiscordPresenceChanged += OnSessionDiscordPresenceChanged;
         // Forwarded as the reportable position rather than the one the beat
         // carried, so a tick and a state report can never disagree about
-        // which item a position belongs to. See CurrentPositionSeconds.
-        _sessionManager.PositionTick += (_, _) =>
-            PositionTick?.Invoke(this, TimeSpan.FromSeconds(CurrentPositionSeconds));
+        // which item a position belongs to. See CurrentPositionSeconds. The
+        // seek fact rides along on the same args, never on a field here: the
+        // timer's beat can race a seek's tick, and a flag either of them
+        // could read would mark whichever report got to it first.
+        _sessionManager.PositionTick += (_, e) =>
+            PositionTick?.Invoke(this, new PositionTickEventArgs(
+                TimeSpan.FromSeconds(CurrentPositionSeconds), e.Seeked));
     }
 
     private void WireMpvEvents()
@@ -860,6 +861,9 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         _sessionVideoId = null;
         _userPaused = false;
         _pausedForCache = false;
+        // A seek that never landed belongs to this playback, and the next
+        // one's first position is not where it landed.
+        _pendingSeek = false;
         await _mpv.StopAsync();
 
         ResetDiscordPresence();
@@ -974,7 +978,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
         Logger.Info("Seeking to {Position}", position);
         await _mpv.SendCommandAsync("seek", [position.TotalSeconds, "absolute+exact"]);
-        _sessionManager.OnSeek(position.TotalMilliseconds);
+        // Moves the session to where it was asked to go, so the hub hears
+        // it at once, but this is not the seek report: mpv has not landed
+        // yet. Its "seek" event does that, through _pendingSeek, exactly
+        // as for a seek the viewer made in mpv.
+        _sessionManager.OnSeek(position.TotalMilliseconds, landed: false);
     }
 
     /// <inheritdoc/>
@@ -1501,7 +1509,13 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 // seek, so consuming it here is what ends the seek. Clearing it
                 // at "playback-restart" instead would fire before that report
                 // arrives and OnSeek would never be reached at all.
-                if (_pendingSeek)
+                //
+                // And it stays pending until there is a session to land in.
+                // A resume seek is issued at file-loaded before StartSession
+                // runs, and mpv can land it first; consumed then, OnSeek has
+                // no session and the seek is never reported. Kept, it marks
+                // the first position once the session exists.
+                if (_pendingSeek && _sessionManager.HasActiveSession)
                 {
                     _pendingSeek = false;
                     _sessionManager.OnSeek(position);

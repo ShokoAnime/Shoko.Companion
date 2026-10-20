@@ -173,7 +173,7 @@ public class EndOfFilePositionTests : IDisposable
     {
         StartPlaying();
         var tick = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _coordinator.PositionTick += (_, pos) => tick.TrySetResult(pos);
+        _coordinator.PositionTick += (_, e) => tick.TrySetResult(e.Position);
 
         Property("time-pos", null);
         _manager.OnScrobbleTimer(null);
@@ -188,7 +188,7 @@ public class EndOfFilePositionTests : IDisposable
     {
         StartPlaying();
         var tick = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _coordinator.PositionTick += (_, pos) => tick.TrySetResult(pos);
+        _coordinator.PositionTick += (_, e) => tick.TrySetResult(e.Position);
 
         _manager.EndSession(_manager.CurrentPositionMs);
         _manager.OnScrobbleTimer(null);
@@ -284,7 +284,7 @@ public class EndOfFilePositionTests : IDisposable
         Assert.Equal(0, _coordinator.CurrentPositionSeconds);
 
         var tick = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _coordinator.PositionTick += (_, pos) => tick.TrySetResult(pos);
+        _coordinator.PositionTick += (_, e) => tick.TrySetResult(e.Position);
         _manager.OnScrobbleTimer(null);
         Assert.Equal(TimeSpan.Zero, await tick.Task.WaitAsync(TimeSpan.FromSeconds(5)));
     }

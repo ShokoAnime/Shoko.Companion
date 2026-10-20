@@ -43,7 +43,7 @@ public sealed class StubPlaybackCoordinator : IPlaybackCoordinator
 
     public event EventHandler<PlaybackStateChangedEventArgs>? StateChanged { add { } remove { } }
 
-    public event EventHandler<TimeSpan>? PositionTick { add { } remove { } }
+    public event EventHandler<PositionTickEventArgs>? PositionTick { add { } remove { } }
 
     public event EventHandler? VolumeStateChanged { add { } remove { } }
 

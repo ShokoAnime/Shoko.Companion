@@ -515,7 +515,7 @@ public partial class App : Application
         });
     }
 
-    private void OnCoordinatorPositionTick(object? sender, TimeSpan position)
+    private void OnCoordinatorPositionTick(object? sender, PositionTickEventArgs tick)
     {
         if (MediaSessionClient is not { IsConnected: true } || _coordinator is null)
             return;
@@ -526,7 +526,7 @@ public partial class App : Application
             CurrentItem = _coordinator.CurrentItem,
             NextItem = _coordinator.NextItem,
             PreviousItem = _coordinator.PreviousItem,
-            Position = position,
+            Position = tick.Position,
             Duration = _coordinator.DurationSeconds.HasValue ? TimeSpan.FromSeconds(_coordinator.DurationSeconds.Value) : null,
             IsPaused = _coordinator.CurrentState is PlaybackState.Paused,
             Volume = _coordinator.CurrentVolume,
@@ -534,6 +534,10 @@ public partial class App : Application
             PlaybackSpeed = _coordinator.CurrentPlaybackSpeed,
             IsFullscreen = _coordinator.CurrentFullscreen,
             Tracks = _coordinator.CurrentTracks,
+            // The one report that says a seek landed. Every other call site
+            // leaves it null, and MediaSessionClient keeps it out of every
+            // baseline, so it is sent once and never again.
+            Seeked = tick.Seeked ? true : null,
         });
     }
 

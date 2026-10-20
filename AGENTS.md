@@ -89,7 +89,7 @@ route.
    server's to say
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
-5. **Report state**: via `UpdateState({ State, VideoId, Title, PositionSeconds, DurationSeconds, Tracks })` on coordinator state changes
+5. **Report state**: via `UpdateState` on coordinator state changes and position ticks — `State`, the `CurrentItem` / `NextItem` / `PreviousItem` triple, `Position`, `Duration`, `IsPaused`, `Volume`, `IsMuted`, `PlaybackSpeed`, `IsFullscreen`, `Tracks`, and `Seeked` on the one report after a seek lands. A patch, not a snapshot: see the next two sections
 
 ### The hub connection serialises with Newtonsoft, and a state report is a patch
 
@@ -126,7 +126,8 @@ not something a call site can know — a volume change and a tick arrive
 through different events and can carry each other's news — and the caller's
 whole picture is needed anyway, because `_lastState` is the payload a
 registration and a reclaim carry, and a baseline cannot be described in
-deltas.
+deltas. The one field a baseline never keeps is `Seeked`, because it is an
+event: see below.
 
 Three things drop the baseline, and the first is the one that would break
 quietly:
@@ -165,6 +166,44 @@ No `KeepAliveInterval` or `ServerTimeout` is configured anywhere here, so
 SignalR's defaults stand: the client pings on its own when it has sent
 nothing for 15s, and its 30s server timeout is reset by anything received.
 What the far side makes of the silence is the far side's question.
+
+### `Seeked` is an event, so it is never part of a baseline
+
+The plugin stopped guessing seeks from position jumps (revam, 2026-10-20)
+and relies on each client saying so: once a viewer is past its watch-sync
+gate, a report with `Seeked: true` saves the watch position at once rather
+than at the next 60 s interval. `true` means *this report's position is
+where a seek landed*; absent means no seek, and the server never stores it.
+So it is the one field that is not state, and three rules follow:
+
+- **It rides on the tick, not beside it.** mpv's `seek` event sets
+  `_pendingSeek`, and the first real `time-pos` after it calls
+  `PlaybackSessionManager.OnSeek`, whose tick is raised with
+  `PositionTickEventArgs.Seeked`. The coordinator forwards the flag on its
+  own `PositionTick`, and `App.OnCoordinatorPositionTick` puts it on that
+  report alone. A field anywhere else would be read by whichever tick got
+  there first, and the timer's beat runs on the thread pool too. Every seek
+  takes this path: one made in mpv, the hub's `Seek` (`SeekAsync` moves the
+  session at once with `landed: false`, which is a position and not a seek
+  report; mpv's own `seek` event reports the landing), and the resume seek
+  at `file-loaded`, which is a `time-pos` set and so a seek to mpv. That
+  one is issued before `StartSession`, so a pending seek is kept until a
+  session exists rather than consumed into nothing, and `StopAsync` drops
+  one that never landed. A null `time-pos` never consumes it, so a seek is
+  never reported at 0.
+- **`WithoutSeek` keeps it out of every baseline.** Both `_lastState`, the
+  whole picture a registration or a reclaim carries, and `_reportedState`,
+  the patch baseline, are stored through it. That is what makes it one-shot
+  by construction: carried in `_lastState` it would be a seek replayed on
+  every reconnect, and nothing at the call sites has to remember to clear
+  it.
+- **It is never compared, and it takes `Position` with it.** A report that
+  says it is sent whatever else moved, with its position even when the
+  baseline already holds that position, as it does after `SeekAsync` moved
+  the session ahead of mpv. Null is not written at all: unlike the other
+  fields there is no null the far side could hold.
+
+`SeekReportTests` holds both halves.
 
 ### Only one of the two writes the watch state, and it takes an item to hand back
 

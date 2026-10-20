@@ -113,9 +113,11 @@ public interface IPlaybackCoordinator
 
     /// <summary>
     ///   Raised periodically (≈ every 10 s) during playback with the
-    ///   current position so the media session hub stays in sync.
+    ///   current position so the media session hub stays in sync, and once
+    ///   more on the first position after a seek lands, marked
+    ///   <see cref="PositionTickEventArgs.Seeked"/>.
     /// </summary>
-    event EventHandler<TimeSpan>? PositionTick;
+    event EventHandler<PositionTickEventArgs>? PositionTick;
 
     /// <summary>
     ///   Raised when the current volume or mute state changes.

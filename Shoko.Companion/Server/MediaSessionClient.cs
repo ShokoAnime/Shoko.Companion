@@ -115,7 +115,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
         _apiKey = apiKey;
         _deviceName = deviceName;
         _coordinator = coordinator;
-        _lastState = initialState;
+        _lastState = initialState?.WithoutSeek();
         _playbackState = PlaybackStateWire.FromWireName(initialState?.State);
 
         // Every path that changes a setting ends in Save(), which raises
@@ -573,7 +573,10 @@ public sealed class MediaSessionClient : IAsyncDisposable
     public async Task ReportStateAsync(PlaybackStateUpdateDto state)
     {
         CancelStoppedTimer();
-        _lastState = state;
+        // The whole picture minus the seek: this is the baseline a
+        // registration or a reclaim carries, and a seek is an event, so
+        // carried there it would be a seek replayed on every reconnect.
+        _lastState = state.WithoutSeek();
 
         if (_connection is null || _connection.State != HubConnectionState.Connected || _sessionId is null)
             return;
@@ -621,11 +624,12 @@ public sealed class MediaSessionClient : IAsyncDisposable
         // A reported idle clears the item triple, the position, the
         // duration and the tracks on the far side, so what it holds after
         // one is not what this report said. Asked through the flag because
-        // an unnamed state reads as idle.
+        // an unnamed state reads as idle. And never with the seek in it:
+        // the baseline is what the far side holds, and it holds no seek.
         _reportedState = state.ShouldSerializeState()
             && state.State == PlaybackState.Idle.ToWireName()
             ? null
-            : state;
+            : state.WithoutSeek();
 
         return patch;
     }
@@ -1283,7 +1287,67 @@ public sealed class PlaybackStateUpdateDto
         _isFullscreenSet = Moved(report._isFullscreenSet, report.IsFullscreen, baseline._isFullscreenSet, baseline.IsFullscreen);
         Tracks = report.Tracks;
         _tracksSet = Moved(report._tracksSet, report.Tracks, baseline._tracksSet, baseline.Tracks);
+
+        // An event, so never compared: it goes out whenever the report
+        // says it. And it says where the seek landed, so the position goes
+        // with it even when the baseline already holds that position, as
+        // it does after a commanded seek moved the session ahead of mpv.
+        Seeked = report.Seeked;
+        if (Seeked is not null)
+            _positionSet = report._positionSet;
     }
+
+    /// <summary>
+    ///   Initializes a copy of <paramref name="source"/> that names what
+    ///   it named, except <see cref="Seeked"/>.
+    /// </summary>
+    /// <param name="source">The report to copy.</param>
+    private PlaybackStateUpdateDto(PlaybackStateUpdateDto source)
+    {
+        State = source.State;
+        _stateSet = source._stateSet;
+        CurrentItem = source.CurrentItem;
+        _currentItemSet = source._currentItemSet;
+        NextItem = source.NextItem;
+        _nextItemSet = source._nextItemSet;
+        PreviousItem = source.PreviousItem;
+        _previousItemSet = source._previousItemSet;
+        Position = source.Position;
+        _positionSet = source._positionSet;
+        Duration = source.Duration;
+        _durationSet = source._durationSet;
+        IsPaused = source.IsPaused;
+        _isPausedSet = source._isPausedSet;
+        Volume = source.Volume;
+        _volumeSet = source._volumeSet;
+        IsMuted = source.IsMuted;
+        _isMutedSet = source._isMutedSet;
+        PlaybackSpeed = source.PlaybackSpeed;
+        _playbackSpeedSet = source._playbackSpeedSet;
+        IsFullscreen = source.IsFullscreen;
+        _isFullscreenSet = source._isFullscreenSet;
+        Tracks = source.Tracks;
+        _tracksSet = source._tracksSet;
+    }
+
+    /// <summary>
+    ///   This report as a baseline: everything it names except
+    ///   <see cref="Seeked"/>, which is an event and not state.
+    ///
+    ///   <para>
+    ///     Every baseline goes through here, both the last report the
+    ///     server accepted and the whole picture a registration or a
+    ///     reclaim carries. That is what makes the seek one-shot by
+    ///     construction rather than by every caller remembering to clear
+    ///     it: a seek kept in either would be compared against, or worse,
+    ///     re-sent on a reconnect as a seek that happened again.
+    ///   </para>
+    /// </summary>
+    /// <returns>
+    ///   This report when it says no seek, otherwise a copy without one.
+    /// </returns>
+    internal PlaybackStateUpdateDto WithoutSeek()
+        => Seeked is null ? this : new PlaybackStateUpdateDto(this);
 
     /// <summary>
     ///   This report reduced to what moved since <paramref name="baseline"/>,
@@ -1315,7 +1379,8 @@ public sealed class PlaybackStateUpdateDto
     private bool NamesNothing
         => !(_stateSet || _currentItemSet || _nextItemSet || _previousItemSet
             || _positionSet || _durationSet || _isPausedSet || _volumeSet
-            || _isMutedSet || _playbackSpeedSet || _isFullscreenSet || _tracksSet);
+            || _isMutedSet || _playbackSpeedSet || _isFullscreenSet || _tracksSet
+            || Seeked is not null);
 
     /// <summary>
     ///   Whether a field this report named says something the far side
@@ -1538,6 +1603,28 @@ public sealed class PlaybackStateUpdateDto
 
     /// <summary>Whether the report named <see cref="Tracks"/>.</summary>
     public bool ShouldSerializeTracks() => _tracksSet;
+
+    /// <summary>
+    ///   <c>true</c> when <see cref="Position"/> is where a seek mpv just
+    ///   completed landed; <c>null</c>, and absent from the frame, on every
+    ///   other report.
+    ///
+    ///   <para>
+    ///     An event, not state: the server never stores it, and acts on it
+    ///     once, by saving the watch position at once instead of at its
+    ///     next interval. So it is set on exactly one report per seek, the
+    ///     first position after mpv lands, and
+    ///     <see cref="WithoutSeek"/> keeps it out of every baseline. Unlike
+    ///     the fields above, null here is not a value the far side could
+    ///     hold, so there is nothing to tell apart and null is simply not
+    ///     written.
+    ///   </para>
+    /// </summary>
+    [JsonProperty("Seeked")]
+    public bool? Seeked { get; init; }
+
+    /// <summary>Whether the report says a seek landed.</summary>
+    public bool ShouldSerializeSeeked() => Seeked is not null;
 }
 
 /// <summary>
