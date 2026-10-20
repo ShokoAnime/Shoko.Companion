@@ -287,6 +287,7 @@ public class PlaybackSessionManager
     {
         if (_session is null) return;
         _session.PositionMs = positionMs;
+        _session.Played = true;
     }
 
     /// <summary>
@@ -307,6 +308,8 @@ public class PlaybackSessionManager
         Logger.Info("Seek detected — new position {Pos:F0}ms", positionMs);
 
         _session.PositionMs = positionMs;
+        if (landed)
+            _session.Played = true;
         if (!_session.IsPaused)
             _scrobbleTimer?.Change(ScrobbleIntervalMs, ScrobbleIntervalMs);
 
@@ -459,6 +462,55 @@ public class PlaybackSessionManager
     }
 
     /// <summary>
+    ///   End the session because mpv could not play its file: <c>end-file</c>
+    ///   with reason <c>error</c>.
+    ///
+    ///   <para>
+    ///     A file mpv never gave a position for never played, so it ends
+    ///     with no <see cref="ScrobbleEventType.PlaybackEnd"/> of ours and
+    ///     no position kept: there is no viewing to record, and a stop
+    ///     written for it would be a watch record of a file nobody saw,
+    ///     made at whatever position the session was started at. The timer
+    ///     stops with it, so nothing ticks for the file afterwards. A file
+    ///     mpv did give a position for played, and ends the way any other
+    ///     does, through <see cref="EndSession"/>.
+    ///   </para>
+    ///   <para>
+    ///     The session can still be on the file before the failed one, when
+    ///     mpv's <c>path</c> for the failed file had not arrived yet. That
+    ///     file has already ended, at its own <c>end-file</c>, and is not
+    ///     ended a second time here.
+    ///   </para>
+    /// </summary>
+    /// <param name="failedVideoId">
+    ///   The video mpv could not play, when known.
+    /// </param>
+    /// <returns>
+    ///   The file ID the session was on, or <c>null</c> when none was
+    ///   running.
+    /// </returns>
+    public int? EndFailedSession(int? failedVideoId)
+    {
+        if (_session is { Played: true } played
+            && (failedVideoId is null || failedVideoId == played.VideoId))
+            return EndSession(played.PositionMs);
+
+        _scrobbleTimer?.Dispose();
+        _scrobbleTimer = null;
+
+        if (_session is null)
+            return null;
+
+        var fileId = _session.VideoId;
+        Logger.Info("File {File}: session ended for a file mpv could not play, with no stop scrobble", fileId);
+        SettingsProvider.Instance.Settings.RestrictedContentPlaying = false;
+        _ended = null;
+        _session = null;
+        DiscordPresenceChanged?.Invoke(this, null);
+        return fileId;
+    }
+
+    /// <summary>
     /// Called when playback reaches the end of a file in a multi-item playlist
     /// (end-file with reason "eof" and more items pending). Emits a <see cref="ScrobbleEventType.PlaybackEnd"/>
     /// event for the current file so it gets scrobbled before the session moves on,
@@ -543,6 +595,7 @@ public class PlaybackSessionManager
         _session.SkipEventCount = SettingsProvider.Instance.Settings.SyncUserDataInitialSkipEventCount;
         _session.IsPaused = true;
         _session.EofReached = false;
+        _session.Played = false;
         _session.VideoStreamOrdinal = null;
         _session.AudioStreamOrdinal = null;
         _session.SubtitleStreamOrdinal = null;
@@ -776,6 +829,13 @@ public class PlaybackSessionManager
         public bool IsPaused;
         public bool IsRestricted;
         public bool EofReached;
+
+        /// <summary>
+        ///   Whether mpv has given a position for this file, which is what
+        ///   separates a file that played from one that failed to load.
+        ///   Cleared at the item boundary.
+        /// </summary>
+        public bool Played;
 
         /// <summary>
         ///   The position to report and to scrobble: the last real one, or

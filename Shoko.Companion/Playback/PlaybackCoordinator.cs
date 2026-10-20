@@ -215,6 +215,20 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private List<MediaItemInfoDto>? _mpvPlaylistEntries;
     private int _mpvCurrentPlaylistIndex = -1;
 
+    // mpv's playlist_entry_id for each of _mpvPlaylistEntries, by index, or
+    // null where mpv gave none. Written beside the entries and only read
+    // while it still lines up with them: mpv numbers entries per process,
+    // so ids from a player that has gone would name the wrong files.
+    private List<long?> _mpvPlaylistEntryIds = [];
+
+    // The file mpv last started (its start-file event), and the load it
+    // started under. An end-file names the entry it ends, and only an
+    // error for this attempt, made under the current load, is a failure of
+    // what the companion asked for. See HandleFileError.
+    private bool _fileStarted;
+    private long? _startedEntryId;
+    private int _startedUnder;
+
     /// <summary>
     /// Gets the current playback state.
     /// </summary>
@@ -1853,6 +1867,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         }
 
         var entries = new List<MediaItemInfoDto>();
+        var entryIds = new List<long?>();
         var currentIndex = -1;
         for (var i = 0; i < array.Count; i++)
         {
@@ -1870,6 +1885,9 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             var videoId = Urls.TryGetVideoId(streamUrl);
 
             var isCurrent = entry.Value<bool>("current");
+            entryIds.Add(entry["id"]?.Type is Newtonsoft.Json.Linq.JTokenType.Integer
+                ? entry.Value<long>("id")
+                : null);
             entries.Add(new()
             {
                 VideoId = videoId,
@@ -1882,6 +1900,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         }
 
         _mpvPlaylistEntries = entries;
+        _mpvPlaylistEntryIds = entryIds;
         _mpvCurrentPlaylistIndex = currentIndex;
 
         StateChanged?.Invoke(this, new PlaybackStateChangedEventArgs(_state, _state));
@@ -2260,9 +2279,27 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 _skipPositionEvents = false;
                 break;
 
+            case "start-file":
+                // Which attempt an end-file is about. mpv numbers it, and
+                // the end-file for the same file carries the same number.
+                _startedEntryId = EntryIdOf(args.Data);
+                _startedUnder = Volatile.Read(ref _loadGeneration);
+                _fileStarted = true;
+                break;
+
             case "end-file":
-                var reason = (args.Data as Newtonsoft.Json.Linq.JObject)?["reason"]?.ToString();
+                var endFile = args.Data as Newtonsoft.Json.Linq.JObject;
+                var reason = endFile?["reason"]?.ToString();
                 Logger.Info("mpv end-file: {Reason}", reason);
+                if (reason == "error")
+                {
+                    // Handled without an await before it decides, so that
+                    // the start-file of the entry mpv moves on to, raised
+                    // right behind this event, is not read first.
+                    HandleFileError(endFile);
+                    break;
+                }
+
                 if (reason == "eof")
                 {
                     // The file played to its end, so from here it is at its
@@ -2291,6 +2328,133 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 }
                 break;
         }
+    }
+
+    /// <summary>
+    ///   mpv's <c>playlist_entry_id</c> on a <c>start-file</c> or
+    ///   <c>end-file</c>, or <c>null</c> when it sends none (before 0.33).
+    /// </summary>
+    private static long? EntryIdOf(object? data)
+        => (data as Newtonsoft.Json.Linq.JObject)?["playlist_entry_id"] is { Type: Newtonsoft.Json.Linq.JTokenType.Integer } id
+            ? id.ToObject<long>()
+            : null;
+
+    /// <summary>
+    ///   The index in the observed playlist of the entry mpv numbers
+    ///   <paramref name="entryId"/>, or -1 when the cache does not hold it.
+    /// </summary>
+    private int PlaylistIndexOfEntry(long? entryId)
+    {
+        if (entryId is null || _mpvPlaylistEntries is not { } entries
+            || _mpvPlaylistEntryIds.Count != entries.Count)
+            return -1;
+        return _mpvPlaylistEntryIds.IndexOf(entryId);
+    }
+
+    /// <summary>
+    ///   mpv could not play a file: <c>end-file</c> with reason
+    ///   <c>error</c>. When the file is the one the companion is waiting
+    ///   for or playing, that is the result of the command that asked for
+    ///   it, and it is reported as <see cref="PlaybackState.Error"/> with
+    ///   mpv's own message.
+    ///
+    ///   <para>
+    ///     This is the only thing that ends a load as a failure. mpv going
+    ///     idle is not one: a load that is still preparing is idle too, and
+    ///     reading idleness as failure would cut off a Play that is merely
+    ///     slow. So a file that never loads used to leave the session in
+    ///     <c>Loading</c> for good.
+    ///   </para>
+    ///   <para>
+    ///     The failure is matched to its file in two steps. First the
+    ///     attempt: mpv numbers every file it starts, and the end-file
+    ///     carries the number of the <c>start-file</c> it ends, so only an
+    ///     error for the file mpv last started counts, and only if it was
+    ///     started under the current load (<c>_loadGeneration</c>). An
+    ///     error from a file started before a Stop or a newer Play is from
+    ///     an abandoned load and changes nothing. Then the file: the entry
+    ///     number is looked up in mpv's playlist as last observed, and
+    ///     when the video it names is known it must be the one the
+    ///     companion expects, the one <see cref="ExpectSessionFor"/> named
+    ///     while waiting, or the session's, or the one mpv's <c>path</c>
+    ///     named while playing. An entry the cache does not hold (the
+    ///     <c>.m3u8</c> itself failing to load, or a playlist observation
+    ///     not yet arrived) is matched by the attempt alone.
+    ///   </para>
+    ///   <para>
+    ///     mpv moves on by itself after an error: the failed file ends with
+    ///     <c>PT_ERROR</c> and <c>mp_play_files</c> advances to the next
+    ///     entry exactly as it does after an end of file, while
+    ///     <c>--keep-open</c> only holds a file that reached its end. So
+    ///     the failed file ends its own session here, without a stop
+    ///     scrobble for a file that never played, and the next file starts
+    ///     normally at its <c>file-loaded</c>. With nothing after it mpv
+    ///     goes idle (<c>--idle=yes</c>) and Error is the last report.
+    ///   </para>
+    ///   <para>
+    ///     The load is bumped as a Stop bumps it: a <c>file-loaded</c> for
+    ///     the failed file still inside its delay must not start a session
+    ///     for it, and a <c>PlayAsync</c> still awaiting its
+    ///     <c>loadfile</c> must not report <c>Loading</c> over the Error.
+    ///   </para>
+    /// </summary>
+    /// <param name="endFile">The end-file event as mpv sent it.</param>
+    private void HandleFileError(Newtonsoft.Json.Linq.JObject? endFile)
+    {
+        var entryId = EntryIdOf(endFile);
+        var message = endFile?["file_error"]?.ToString() is { Length: > 0 } fileError
+            ? fileError
+            : "mpv could not play the file";
+
+        if (!_fileStarted || entryId != _startedEntryId
+            || _startedUnder != Volatile.Read(ref _loadGeneration))
+        {
+            Logger.Info("mpv could not play entry {Entry} ({Error}), which no current load asked for — ignored",
+                entryId, message);
+            return;
+        }
+
+        var playing = _sessionManager.HasActiveSession;
+        if (!playing && _state is not PlaybackState.Loading)
+        {
+            Logger.Info("mpv could not play entry {Entry} ({Error}) with nothing waiting for it — ignored",
+                entryId, message);
+            return;
+        }
+
+        var index = PlaylistIndexOfEntry(entryId);
+        var failedVideo = index >= 0 ? _mpvPlaylistEntries![index].VideoId : null;
+        var matches = failedVideo is null
+            || (playing
+                ? failedVideo == _sessionManager.CurrentVideoId || failedVideo == _mpvPathVideoId
+                : _sessionVideoId is null || failedVideo == _sessionVideoId);
+        if (!matches)
+        {
+            Logger.Info("mpv could not play video {Video} ({Error}), which is not the one expected — ignored",
+                failedVideo, message);
+            return;
+        }
+
+        Logger.Warn("mpv could not play {What}: {Error}",
+            failedVideo is { } v ? $"video {v}" : $"playlist entry {entryId}", message);
+
+        Interlocked.Increment(ref _loadGeneration);
+        _sessionManager.EndFailedSession(failedVideo);
+        CheckRestrictedPrivacyTransition();
+
+        // mpv plays the entry after the failed one next, when there is one,
+        // and file-loaded starts its session. The hint is quiet: no Loading,
+        // since nothing was asked for and the Error is the last word until
+        // mpv says what it is doing instead.
+        _sessionVideoId = index >= 0 && index + 1 < _mpvPlaylistEntries!.Count
+            ? _mpvPlaylistEntries[index + 1].VideoId
+            : null;
+        _mpvPathVideoId = null;
+        _pendingSeek = false;
+        _streamInitPhase = false;
+
+        _notifications.Show("Playback Error", message, NotificationSeverity.Error);
+        SetState(PlaybackState.Error, message);
     }
 
     /// <summary>

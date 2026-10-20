@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Shoko.Companion.Configuration;
 using Shoko.Companion.Playback;
+using Shoko.Companion.Server.Models;
 using Xunit;
 
 namespace Shoko.Companion.Tests;
@@ -245,5 +246,53 @@ public class PlaybackSessionManagerSyncTests : IDisposable
             ids.Sort();
             Assert.Equal([42, 43], ids);
         }
+    }
+
+    // ── A file mpv could not play ──
+
+    [Fact]
+    public void AFailedFileThatNeverPlayed_EndsWithNoStopScrobble()
+    {
+        var manager = NewManager(out var scrobbles, out var gate);
+
+        // Started at a resume position, then mpv failed before any position.
+        manager.StartSession(42, 600_000, 1_000_000, false, "Series", "Episode", 1, 1, 12, null, 1);
+        Assert.Equal(42, manager.EndFailedSession(42));
+
+        Assert.True(NotRaised(gate));
+        Assert.Empty(scrobbles);
+        Assert.False(manager.HasActiveSession);
+        Assert.Null(manager.LastKnownPositionMs);
+    }
+
+    [Fact]
+    public void AFailedNextFile_EndsWithNoStopScrobble_ForEitherFile()
+    {
+        var manager = NewManager(out var scrobbles, out var gate);
+
+        // The first file played; mpv moved onto the second, which failed.
+        Start(manager, 42);
+        manager.OnPositionChanged(300_000);
+        Next(manager, 43);
+        manager.EndFailedSession(43);
+
+        Assert.True(NotRaised(gate));
+        Assert.Empty(scrobbles);
+    }
+
+    [Fact]
+    public void AFailedFileThatPlayed_EndsLikeAnyOther()
+    {
+        var manager = NewManager(out var scrobbles, out var gate);
+
+        Start(manager, 42);
+        manager.OnPositionChanged(300_000);
+        manager.EndFailedSession(42);
+
+        Assert.True(Raised(gate));
+        var end = Assert.Single(scrobbles);
+        Assert.Equal(42, end.FileId);
+        Assert.Equal(ScrobbleEventType.PlaybackEnd, end.EventType);
+        Assert.Equal(TimeSpan.FromMilliseconds(300_000), end.Position);
     }
 }

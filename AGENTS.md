@@ -400,7 +400,8 @@ PlayAsync(shokoUrl)
 ├── Observe time-pos, pause, duration, eof-reached, idle-active
 ├── On position change → scrobble via ShokoApiClient (periodic + pause/resume/stop)
 ├── Auto-watch at ≥97.5% position
-└── On eof-reached/idle → stop + final scrobble
+├── On eof-reached/idle → stop + final scrobble
+└── On end-file reason error → Error with mpv's file_error (never on idle)
 ```
 
 ### Playback Flow (via Media Session API)
@@ -437,6 +438,47 @@ when mpv's answer has been reported. The rules that follow from it:
 - **The end-of-file pause is a stop.** A pause within 300 ms of the end with
   nothing queued reports `Stopped` at the duration, not `Paused`, per
   9f0dc90 (revam's ruling).
+- **A file mpv cannot play is reported as `Error`, from mpv's `end-file`
+  reason and never from idleness.** mpv ends a file it could not load or
+  play with `end-file` reason `error` and, on recent mpv, a `file_error`
+  such as "loading failed" or "unrecognized file format";
+  `HandleFileError` reports `SetState(Error, file_error)`. The hub contract
+  has no field for the message, so the hub gets `error` and the message goes
+  to the notification, the log and `PlaybackStateChangedEventArgs`. mpv going idle is
+  never read as a failure, because a load still preparing is idle too, and a
+  Play that is merely slow must not be cut off. Until this a jump or resume
+  whose file never loaded sat in `preparing` for good. How a failure is
+  matched to its file:
+  - **The attempt.** `start-file` and `end-file` carry the same
+    `playlist_entry_id`, so only an error for the entry mpv last started
+    counts, and only if it started under the current `_loadGeneration`. An
+    error from a load a Stop or a newer Play abandoned changes nothing.
+  - **The file.** The entry id is looked up in mpv's playlist as last
+    observed (each entry's `id`); when it names a video, that must be the
+    one expected: `ExpectSessionFor`'s while waiting, the session's or
+    `path`'s while playing. An entry the cache does not hold (the `.m3u8`
+    itself failing) is matched by the attempt alone.
+  - **What it ends.** The load is bumped like a Stop, so neither a
+    `file-loaded` inside its delay nor a `PlayAsync` still awaiting its
+    `loadfile` can report over the Error. The session ends through
+    `EndFailedSession`: a file mpv never gave a position for gets no
+    `PlaybackEnd` of ours and keeps no position. The timer stops with it.
+  - **mpv moves on by itself.** An error ends the file with `PT_ERROR`,
+    and `mp_play_files` advances on it exactly as on an end of file;
+    `--keep-open` only holds a file that reached `AT_END_OF_FILE`
+    (`handle_keep_open`). So the next entry starts normally at its
+    `file-loaded`, with no `Loading` in between, and with nothing after the
+    failed file mpv goes idle (`--idle=yes`) and `Error` is the last report.
+    Read from mpv's source (`player/loadfile.c`, `player/playloop.c`), not
+    measured: no mpv was at hand.
+
+  Until this landed none of `end-file` reached the coordinator: mpv writes
+  an event's fields beside `event` rather than under `data`, and
+  `MpvIpcClient` handed on `data ?? args`, which is null for `end-file`. So
+  the `eof` branch above never ran outside the tests either.
+  `MpvIpcClient.EventPayload` now hands on the whole message for every event
+  but a property change and a client message. `MpvEventPayloadTests` holds
+  it.
 
 `CommandReportTests` drives each command through the coordinator against a
 mocked mpv that answers a property set by reporting it back, with

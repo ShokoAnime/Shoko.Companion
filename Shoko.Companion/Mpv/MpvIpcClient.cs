@@ -402,7 +402,7 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
         await HandleDisconnect();
     }
 
-    private void ProcessIncomingMessage(string line)
+    internal void ProcessIncomingMessage(string line)
     {
         Logger.Trace("mpv << {Line}", line);
 
@@ -429,8 +429,7 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
             if (msg.TryGetValue("event", out var eventToken))
             {
                 var eventName = eventToken.Value<string>() ?? string.Empty;
-                // Some events (client-message) use "args" instead of "data"
-                var eventPayload = msg["data"] ?? msg["args"];
+                var eventPayload = EventPayload(eventName, msg);
 
                 // Fire generic event
                 MpvEvent?.Invoke(this, new MpvEventArgs(eventName, eventPayload));
@@ -459,6 +458,38 @@ public class MpvIpcClient : IMpvController, IAsyncDisposable
             Logger.Warn(ex, "Failed to parse mpv message: {Line}", line);
         }
     }
+
+    /// <summary>
+    ///   What an event hands on as its <see cref="MpvEventArgs.Data"/>.
+    ///
+    ///   <para>
+    ///     mpv writes an event's own fields at the top level of the message,
+    ///     beside <c>event</c>, not under a key of their own:
+    ///     <c>{"event":"end-file","reason":"error","playlist_entry_id":2,
+    ///     "file_error":"loading failed"}</c>. Two events nest one thing
+    ///     anyway, a property change its value under <c>data</c> and a
+    ///     client message its arguments under <c>args</c>, and those are
+    ///     handed on as they were. Every other event is handed on whole, so
+    ///     that its fields can be read at all: <c>end-file</c> used to be
+    ///     handed on as <c>null</c>, and its <c>reason</c> never reached the
+    ///     coordinator.
+    ///   </para>
+    ///   <para>
+    ///     A property change with no <c>data</c> stays <c>null</c>. That is
+    ///     mpv saying the property is unavailable, and the whole message in
+    ///     its place would be read as the property's value.
+    ///   </para>
+    /// </summary>
+    /// <param name="eventName">The event's name.</param>
+    /// <param name="msg">The whole message mpv sent.</param>
+    /// <returns>The payload to hand on.</returns>
+    internal static JToken? EventPayload(string eventName, JObject msg)
+        => eventName switch
+        {
+            "property-change" => msg["data"],
+            "client-message" => msg["args"],
+            _ => msg["data"] ?? msg["args"] ?? msg,
+        };
 
     private async Task HandleDisconnect()
     {
