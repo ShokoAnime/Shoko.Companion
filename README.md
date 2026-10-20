@@ -51,6 +51,8 @@ Both handovers are written to the log (`PlaybackSessionManager`), because a hand
 
 `PlaybackSyncingEnabled` only covers the companion's own syncing. Turning it off doesn't stop the server writing for a connected session. To stop both, use privacy mode with **Disable playback event syncing**.
 
+The same goes for `PlaybackSyncingBehavior`, `SyncUserDataInitialSkipEventCount` and `SyncUserDataLiveScrobbleTickThreshold`: they only shape the companion's own syncing. While a media session is connected, when and how often your watch state is written is decided by the server's own settings, not by these.
+
 ### Privacy mode
 
 Privacy mode can be switched from the tray menu, the settings window, or inside mpv (`Ctrl+p` by default). While it's on, the companion tells the server, which then hides what this device plays from everyone else and stops recording it. The server applies this per item and never turns it back off for an item once it's on. Nothing already recorded is removed.
@@ -96,9 +98,9 @@ Options that are enums are saved by name, as listed below.
 | `Volume` | int | `100` | Volume (0 to 130), remembered between plays. |
 | `Muted` | bool | `false` | Mute state, remembered between plays. |
 | `PlaybackSyncingEnabled` | bool | `true` | Sync playback to the server while no media session is connected. |
-| `PlaybackSyncingBehavior` | enum | `AfterPlayback` | `AfterPlayback`, `OnEveryEvent` or `LiveSync` (see above). |
-| `SyncUserDataInitialSkipEventCount` | int | `3` | Progress events to skip at the start, while the player settles. |
-| `SyncUserDataLiveScrobbleTickThreshold` | int | `6` | Live sync interval in 10-second ticks (1 to 60). The default is one update a minute. |
+| `PlaybackSyncingBehavior` | enum | `AfterPlayback` | `AfterPlayback`, `OnEveryEvent` or `LiveSync` (see above). Own syncing only. |
+| `SyncUserDataInitialSkipEventCount` | int | `3` | Progress events to skip at the start, while the player settles. Own syncing only. |
+| `SyncUserDataLiveScrobbleTickThreshold` | int | `6` | Live sync interval in 10-second ticks (1 to 60). The default is one update a minute. Own syncing only. |
 | `MediaSessionEnabled` | bool | `false` | Use the server's media sessions. |
 | `MediaSessionAutoConnectId` | Guid | `null` | ID of the connection to join media sessions on at start-up. |
 | `AllowRemotePlay` | bool | `true` | Let other devices start and control playback here. |

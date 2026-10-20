@@ -257,9 +257,9 @@ public class CompanionSettings
 
     /// <summary>
     /// How aggressively to sync playback events to the Shoko server.
-    /// <c>AfterPlayback</c>: stop event only.
+    /// <c>AfterPlayback</c> (default): stop event only.
     /// <c>OnEveryEvent</c>: play/pause/resume/stop events.
-    /// <c>LiveSync</c> (default): play/pause/resume/stop + periodic live progress.
+    /// <c>LiveSync</c>: play/pause/resume/stop + periodic live progress.
     /// Only effective when <see cref="PlaybackSyncingEnabled"/> is true.
     /// </summary>
     public PlaybackSyncingBehavior PlaybackSyncingBehavior { get; set; } = PlaybackSyncingBehavior.AfterPlayback;
