@@ -190,8 +190,35 @@ public class PlaybackSessionManager
             _session?.AudioStreamOrdinal,
             _session?.SubtitleStreamOrdinal);
 
-    /// <summary>The last known playback position in milliseconds.</summary>
+    /// <summary>
+    ///   The current session's last known position in milliseconds, or 0
+    ///   when there is no session. For the session's own bookkeeping and the
+    ///   end-of-file checks; what is <em>reported</em> reads
+    ///   <see cref="LastKnownPositionMs"/>, which a 0 here would contradict
+    ///   the moment the session ends.
+    /// </summary>
     public double CurrentPositionMs => _session?.PositionMs ?? 0;
+
+    /// <summary>
+    ///   The last real position measured, in milliseconds: the current
+    ///   session's, or once it has ended the position it ended at, until the
+    ///   next <see cref="StartSession"/>. <c>null</c> when nothing has been
+    ///   measured yet. Read with <see cref="PositionVideoId"/>, which says
+    ///   which file it belongs to.
+    /// </summary>
+    public double? LastKnownPositionMs => _session?.PositionMs ?? _ended?.PositionMs;
+
+    /// <summary>
+    ///   The file <see cref="LastKnownPositionMs"/> was measured on.
+    /// </summary>
+    public int? PositionVideoId => _session?.VideoId ?? _ended?.VideoId;
+
+    /// <summary>
+    ///   Where the last session ended, kept so the reports that follow the
+    ///   end, the <c>Stopped</c> one first, can say where playback was
+    ///   rather than 0.
+    /// </summary>
+    private (int VideoId, double PositionMs)? _ended;
 
     /// <summary>Whether end-of-file was reached in the current session.</summary>
     public bool HasReachedEof => _session?.EofReached ?? false;
@@ -204,6 +231,7 @@ public class PlaybackSessionManager
         string? posterUrl, int animeId, PlaylistEpisodeIDsDto? episodeIds = null)
     {
         var settings = SettingsProvider.Instance.Settings;
+        _ended = null;
         _session = new PlaybackSession
         {
             VideoId = fileId,
@@ -391,6 +419,7 @@ public class PlaybackSessionManager
         Logger.Info("Session ended at {Pos:F0}ms (dur={Dur:F0}ms, watched={Watched}, eof={Eof}, sendStop={SendStop}, serverOwned={Suppressed})",
             position, _session?.DurationMs ?? 0, watched, _session?.EofReached, shouldSendStop, syncSuppressed);
         SettingsProvider.Instance.Settings.RestrictedContentPlaying = false;
+        _ended = (fileId, position);
         _session = null;
 
         if (syncSuppressed)
@@ -525,11 +554,17 @@ public class PlaybackSessionManager
         EmitDiscordPresence();
     }
 
-    private void OnScrobbleTimer(object? state)
+    internal void OnScrobbleTimer(object? state)
     {
+        // A beat that raced EndSession has nothing to report: nothing is
+        // playing, and a tick here would say position 0 while the state
+        // still read as playing.
+        if (_session is not { } session)
+            return;
+
         // Fire position tick on every timer beat so the media session hub
         // gets regular position updates even when the scrobble is throttled.
-        var pos = TimeSpan.FromMilliseconds(_session?.PositionMs ?? 0);
+        var pos = TimeSpan.FromMilliseconds(session.PositionMs);
         Task.Run(() => PositionTick?.Invoke(this, pos));
 
         if (_session is null || _session.IsPaused)

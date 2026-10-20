@@ -197,6 +197,40 @@ leave *nobody* writing. Both ends of the handover log a line, because one
 that goes wrong is invisible until the watch state is already wrong.
 `PlaybackSessionManagerSyncTests` holds all of it.
 
+### A position mpv cannot give is not 0
+
+While a media session is connected, the position in the companion's reports
+is what the server judges "watched" from, and the end of a file is where it matters most. When mpv
+unloads a file at its end, `time-pos` goes unavailable and mpv sends
+`"data": null`. That used to be read as 0, so the last tick of a finished
+episode said *playing, at 0:00*, the plugin's end-of-playback save was made
+from it, and an episode watched to the end was stored as watched for 5 ms
+(2026-10-20, video 29529). Three rules now:
+
+- **`PlaybackCoordinator.TimePosMs` maps null to null, and a null is
+  ignored**: the last real position stands. A number, `0.0` included, is a
+  position and is applied.
+- **The last real position outlives the session.** `EndSession` keeps where
+  it ended (`PlaybackSessionManager.LastKnownPositionMs` /
+  `PositionVideoId`) until the next `StartSession`, because the `Stopped`
+  report is built after the session object is gone and used to say 0. A
+  timer beat that races `EndSession` sends no tick at all.
+- **A position belongs to the file it was measured on.**
+  `CurrentPositionSeconds`, which every report reads, and the forwarded
+  `PositionTick` both go through `ReportablePositionMs`: a report naming a
+  different item than the one measured gets 0, which covers mpv moving its
+  playlist on before the next file's first `time-pos`. The null used to
+  zero this by accident.
+
+Omitting an unknown position would be the patch-shaped answer, but
+`_lastState` is the payload a registration or a reclaim carries and the
+plugin refuses a baseline that does not name `Position`. The stopped→idle
+follow-up's `TimeSpan.Zero` stays for the same reason: on `idle` the server
+zeroes the position itself and ignores the one reported. The end-of-file
+pause detection reads `CurrentPositionMs`, which is unchanged, and fires in
+more cases now that the null no longer zeroes it. `EndOfFilePositionTests`
+holds all of it.
+
 ### Track selection goes both ways, and they are not the same way
 
 `SetTracks` is a **command**: the plugin tells this session to switch, and

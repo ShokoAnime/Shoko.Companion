@@ -54,7 +54,11 @@ public interface IPlaybackCoordinator
     Guid? MediaSessionId { get; set; }
 
     /// <summary>
-    /// Gets the current playback position in seconds.
+    ///   Gets the playback position to report, in seconds: the last real
+    ///   position of the item being reported, which outlives the session
+    ///   ending so the <c>Stopped</c> report does not say 0. A position
+    ///   mpv cannot give, such as a file unloaded at its end, leaves the
+    ///   last real one standing.
     /// </summary>
     double CurrentPositionSeconds { get; }
 

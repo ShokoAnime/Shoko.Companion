@@ -228,7 +228,68 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     public IReadOnlyList<MediaItemInfoDto> CurrentPlaylist => _mpvPlaylistEntries ?? [];
 
     /// <inheritdoc/>
-    public double CurrentPositionSeconds => _sessionManager.CurrentPositionMs / 1000.0;
+    public double CurrentPositionSeconds
+        => ReportablePositionMs(CurrentItem?.VideoId,
+            _sessionManager.PositionVideoId,
+            _sessionManager.LastKnownPositionMs) / 1000.0;
+
+    /// <summary>
+    ///   The position to report for the item a report names.
+    ///
+    ///   <para>
+    ///     The last real position stands for as long as the report is about
+    ///     the file it was measured on, or about no item at all, and that
+    ///     includes after the session ended: the <c>Stopped</c> report goes
+    ///     out once the session is gone, and a 0 there is a position nobody
+    ///     measured. The plugin judges a viewing watched from the position it
+    ///     last heard, so a fabricated 0 at the end of a file is an episode
+    ///     that was never marked watched.
+    ///   </para>
+    ///   <para>
+    ///     A report naming a <b>different</b> item gets 0. That is the gap
+    ///     between mpv moving its playlist on and the next file's first
+    ///     <c>time-pos</c>: the old file's position is not this item's, and
+    ///     0 is what <see cref="PlaybackSessionManager.OnNextFile"/> starts
+    ///     the new one at.
+    ///   </para>
+    /// </summary>
+    /// <param name="itemVideoId">
+    ///   The video id of the item the report names, or <c>null</c> when it
+    ///   names none or one with no id.
+    /// </param>
+    /// <param name="positionVideoId">
+    ///   The file <paramref name="positionMs"/> was measured on.
+    /// </param>
+    /// <param name="positionMs">
+    ///   The last real position, or <c>null</c> when nothing was measured.
+    /// </param>
+    /// <returns>The position in milliseconds.</returns>
+    internal static double ReportablePositionMs(int? itemVideoId, int? positionVideoId, double? positionMs)
+        => positionMs is { } ms && (itemVideoId is null || itemVideoId == positionVideoId)
+            ? ms
+            : 0;
+
+    /// <summary>
+    ///   mpv's <c>time-pos</c> in milliseconds, or <c>null</c> when mpv says
+    ///   it has none.
+    ///
+    ///   <para>
+    ///     mpv sends <c>"data": null</c> when the property becomes
+    ///     unavailable, which is what happens when a file is unloaded at its
+    ///     end, and a number, <c>0</c> included, whenever it has one. Those
+    ///     are different statements: a seek to the start is a position, an
+    ///     unloaded file is the absence of one. Mapping the second onto 0 made
+    ///     the last tick of a finished episode say it was at the beginning.
+    ///   </para>
+    /// </summary>
+    /// <param name="data">The property-change payload.</param>
+    /// <returns>The position, or <c>null</c> to leave the last one standing.</returns>
+    internal static double? TimePosMs(object? data) => data switch
+    {
+        double d => d * 1000,
+        long l => l * 1000,
+        _ => null,
+    };
 
     /// <inheritdoc/>
     public double? DurationSeconds => _duration > 0 ? _duration / 1000.0 : null;
@@ -303,12 +364,26 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     /// and wires mpv event handlers.
     /// </summary>
     public PlaybackCoordinator()
+        : this(new ShokoApiClient(new HttpClient()), new MpvIpcClient(),
+            PlatformNotificationService.Instance, new DiscordPresenceService(),
+            new PlaybackSessionManager())
     {
-        _apiClient = new ShokoApiClient(new HttpClient());
-        _mpv = new MpvIpcClient();
-        _notifications = PlatformNotificationService.Instance;
-        _discord = new DiscordPresenceService();
-        _sessionManager = new PlaybackSessionManager();
+    }
+
+    /// <summary>
+    ///   Initializes a coordinator over the given collaborators. The seam
+    ///   the tests drive mpv's events through; the app uses the
+    ///   parameterless constructor.
+    /// </summary>
+    internal PlaybackCoordinator(IShokoApiClient apiClient, IMpvController mpv,
+        INotificationService notifications, IDiscordPresenceService discord,
+        PlaybackSessionManager sessionManager)
+    {
+        _apiClient = apiClient;
+        _mpv = mpv;
+        _notifications = notifications;
+        _discord = discord;
+        _sessionManager = sessionManager;
 
         _lastPrivacyMode = SettingsProvider.Instance.Settings.PrivacyMode;
         _lastEffectivePrivacyMode = SettingsProvider.Instance.Settings.EffectivePrivacyMode;
@@ -326,7 +401,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     {
         _sessionManager.ScrobbleRequested += OnSessionScrobbleRequested;
         _sessionManager.DiscordPresenceChanged += OnSessionDiscordPresenceChanged;
-        _sessionManager.PositionTick += (_, pos) => PositionTick?.Invoke(this, pos);
+        // Forwarded as the reportable position rather than the one the beat
+        // carried, so a tick and a state report can never disagree about
+        // which item a position belongs to. See CurrentPositionSeconds.
+        _sessionManager.PositionTick += (_, _) =>
+            PositionTick?.Invoke(this, TimeSpan.FromSeconds(CurrentPositionSeconds));
     }
 
     private void WireMpvEvents()
@@ -1414,12 +1493,10 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             case MpvPropTimePos:
                 if (_skipPositionEvents)
                     break;
-                var position = args.Data switch
-                {
-                    double d => d * 1000,
-                    long l => l * 1000,
-                    _ => 0,
-                };
+                // Unavailable is not 0: the last real position stands, and a
+                // pending seek stays pending for the report that has one.
+                if (TimePosMs(args.Data) is not { } position)
+                    break;
                 // One-shot: the flag names the *first* position report after a
                 // seek, so consuming it here is what ends the seek. Clearing it
                 // at "playback-restart" instead would fire before that report
