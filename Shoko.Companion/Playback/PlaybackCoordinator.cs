@@ -95,7 +95,18 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
     private PlaybackState _state = PlaybackState.Idle;
     private double _duration;
+
+    // The video file-loaded should start a session for, set by
+    // ExpectSessionFor. Only a hint: the video mpv's own path names wins.
     private int? _sessionVideoId;
+
+    // The video mpv's "path" property last named, or null when it named
+    // nothing this companion recognises. What mpv is actually loading.
+    private int? _mpvPathVideoId;
+
+    // Bumped by every PlayAsync and every StopAsync, so a load still
+    // resolving can tell that it lost to a Stop or to a newer Play.
+    private int _loadGeneration;
     private List<PlaylistItemDto>? _playlistItems;
     private Dictionary<int, StreamMetadata> _streamMetadata = [];
     private readonly Dictionary<int, MediaInfoDto> _mediaInfo = [];
@@ -457,6 +468,20 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             }
         }
 
+        // This load, as opposed to a Stop or a newer Play that arrives while
+        // it is still resolving. Every await below can let one of those in,
+        // and each is followed by a check: a load that lost must not report
+        // anything, and above all must not report Loading over the Stopped
+        // that beat it.
+        var load = Interlocked.Increment(ref _loadGeneration);
+        bool Superseded()
+        {
+            if (load == Volatile.Read(ref _loadGeneration))
+                return false;
+            Logger.Info("Playback startup abandoned — a Stop or a newer Play arrived while it was loading");
+            return true;
+        }
+
         // Clear idle presence when starting playback
         StopIdleTimer();
 
@@ -482,6 +507,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             // Resolve the best base URL via RouteResolver (supports multi-route fallback)
             var baseUrl = await RouteResolver.ResolveBestBaseUrlAsync(parsed.ServerBaseUrl);
+            if (Superseded())
+                return;
             if (string.IsNullOrWhiteSpace(baseUrl))
             {
                 _notifications.Show("Playback Error", "Failed to resolve base URL. Set one in settings.", NotificationSeverity.Error);
@@ -490,6 +517,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             }
 
             var apiKey = await ResolveCredentialsAsync(baseUrl);
+            if (Superseded())
+                return;
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _notifications.Show("Playback Error", "No API key configured. Set one in settings.", NotificationSeverity.Error);
@@ -502,10 +531,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             // Fetch playlist metadata (with media info for stream-selection mapping)
             var jsonUrl = $"{baseUrl}/api/v3/Playlist/Generate?playlist={parsed.PlaylistId}&include=MediaInfo&apikey={apiKey}";
-            _playlistItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+            var playlistItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+            if (Superseded())
+                return;
 
             // If null due to 401, invalidate stored key, re-prompt, and retry once
-            if (_playlistItems is null && _apiClient.LastResponseWasUnauthorized == true && baseUrl is not null)
+            if (playlistItems is null && _apiClient.LastResponseWasUnauthorized == true && baseUrl is not null)
             {
                 var badRouteKey = RouteResolver.ExtractRouteKey(baseUrl);
                 if (badRouteKey is not null)
@@ -520,21 +551,26 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 }
 
                 var newKey = await ResolveCredentialsAsync(baseUrl);
+                if (Superseded())
+                    return;
                 if (newKey is not null)
                 {
                     _apiClient.SetApiKey(newKey);
                     apiKey = newKey;
-                    _playlistItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+                    playlistItems = await _apiClient.FetchPlaylistJsonAsync(jsonUrl);
+                    if (Superseded())
+                        return;
                 }
             }
 
-            if (_playlistItems is null || _playlistItems.Count == 0)
+            if (playlistItems is null || playlistItems.Count == 0)
             {
                 _notifications.Show("Playback Error", "No files returned from playlist", NotificationSeverity.Error);
                 SetState(PlaybackState.Error, "Empty playlist");
                 return;
             }
 
+            _playlistItems = playlistItems;
             CacheMediaInfo(_playlistItems);
 
             // Read metadata from first item
@@ -553,6 +589,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             var m3u8Url = $"{baseUrl}/api/v3/Playlist/Generate.m3u8?playlist={parsed.PlaylistId}&apikey={apiKey}";
             var prepared = await PrepareM3u8Async(m3u8Url, apiKey);
+            if (Superseded())
+                return;
             if (prepared.PlayableUrl is null)
             {
                 _notifications.Show("Playback Error",
@@ -564,7 +602,6 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             _streamMetadata = prepared.Metadata;
             EnrichStreamMetadataFromPlaylist(_playlistItems, _streamMetadata);
-            _streamInitPhase = true;
 
             // Reset volume-restored guard so the initial mpv volume property-change
             // doesn't overwrite the persisted value before we restore it.
@@ -572,7 +609,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             _muteRestored = false;
             _fullscreenRestored = false;
 
-            _sessionVideoId = firstFile.ID;
+            ExpectSessionFor(firstFile.ID);
 
             // Record the requested start position, if any. Nothing else is
             // read from user data here: file-loaded fetches it anyway, and
@@ -580,7 +617,19 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             // resolved server-side.
             ApplyStartPosition(_playlistItems, startPosition);
 
-            if (!await EnsureMpvConnectedAsync())
+            var connected = await EnsureMpvConnectedAsync();
+            if (Superseded())
+            {
+                // The Stop ran while mpv was being launched, so the player it
+                // stopped may not be the one that came up. Nothing newer has
+                // taken mpv over (that would have left the state moving), so
+                // the one this load launched goes too.
+                if (connected && _state is PlaybackState.Stopped or PlaybackState.Idle)
+                    await StopMpvAsync();
+                return;
+            }
+
+            if (!connected)
             {
                 _notifications.Show("mpv Launch Failed",
                     "Could not launch mpv or connect to its IPC socket.",
@@ -592,6 +641,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             // Load the playlist into mpv — the server URL, or the rewritten
             // copy when it carried media session entries needing our session id.
             await _mpv.LoadFileAsync(prepared.PlayableUrl);
+            if (Superseded())
+                return;
 
             // Apply resume position once the file loads (handled in OnMpvEvent file-loaded)
 
@@ -603,8 +654,59 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         catch (Exception ex)
         {
             Logger.Error(ex, "Playback startup failed");
+            if (Superseded())
+                return;
             _notifications.Show("Playback Error", ex.Message, NotificationSeverity.Error);
             SetState(PlaybackState.Error, ex.Message);
+        }
+    }
+
+    /// <summary>
+    ///   Get ready for mpv to start playing a file while no session is
+    ///   running, so that <c>file-loaded</c> starts one for it.
+    ///
+    ///   <para>
+    ///     Every path that makes mpv start playing from nothing comes
+    ///     through here: <see cref="PlayAsync"/>, and the playlist commands
+    ///     that start playback in an mpv that sits idle with a queue,
+    ///     <see cref="ResumeAsync"/> and <see cref="JumpToPlaylistItemAsync"/>.
+    ///     Only <see cref="PlayAsync"/> used to, and playback started any
+    ///     other way ran with no session at all: no ticks, a position stuck
+    ///     at 0, no seek reports and no tracks. The session itself is
+    ///     started at <c>file-loaded</c>, in one place, whatever asked.
+    ///   </para>
+    ///   <para>
+    ///     The state is <c>Loading</c> until mpv says otherwise. What comes
+    ///     after it is mpv's to say, through <c>file-loaded</c> and the
+    ///     <c>pause</c> property, never an assumption made here.
+    ///   </para>
+    /// </summary>
+    /// <param name="videoId">
+    ///   The video mpv is about to load, when known. <c>file-loaded</c>
+    ///   prefers the one mpv's own <c>path</c> names.
+    /// </param>
+    private void ExpectSessionFor(int? videoId)
+    {
+        _sessionVideoId = videoId;
+        _streamInitPhase = true;
+        StopIdleTimer();
+        SetState(PlaybackState.Loading);
+    }
+
+    /// <summary>
+    ///   Stop mpv, and survive it failing. A Stop must end in a report of
+    ///   the state it left the companion in, and an IPC error on the way
+    ///   out is not a reason to leave the server believing playback runs.
+    /// </summary>
+    private async Task StopMpvAsync()
+    {
+        try
+        {
+            await _mpv.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "mpv did not stop cleanly; reporting the stop anyway");
         }
     }
 
@@ -730,38 +832,37 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     }
 
     /// <summary>
-    /// Append a shoko:// URL to the current mpv playlist without interrupting
-    /// playback, carrying <paramref name="startPosition"/> to the appended
-    /// item so a requested position survives the append route.
+    ///   Append a shoko:// URL to the current mpv playlist without
+    ///   interrupting playback, carrying <paramref name="startPosition"/> to
+    ///   the appended item so a requested position survives the append route.
+    ///
+    ///   <para>
+    ///     The playback state is not touched. What is playing goes on
+    ///     playing while the queue grows, so reporting <c>Loading</c> for it
+    ///     was false, and restoring the state saved before the append put
+    ///     back a stale one over any pause or resume the viewer made in the
+    ///     meantime. The queue change reaches the server as a playlist
+    ///     report, and anything mpv does in the meantime as its own report.
+    ///   </para>
     /// </summary>
     private async Task AppendToPlaylistAsync(string shokoUrl, TimeSpan? startPosition = null)
     {
-        var previousState = _state;
-        SetState(PlaybackState.Loading);
-
         try
         {
             var parsed = ShokoUrlParser.Parse(shokoUrl);
             if (parsed is not { IsPlayAction: true })
             {
                 _notifications.Show("Playback Error", "Unsupported action for playback", NotificationSeverity.Error);
-                SetState(previousState);
                 return;
             }
 
             var baseUrl = await RouteResolver.ResolveBestBaseUrlAsync(parsed.ServerBaseUrl);
             if (string.IsNullOrWhiteSpace(baseUrl))
-            {
-                SetState(previousState);
                 return;
-            }
 
             var apiKey = await ResolveCredentialsAsync(baseUrl);
             if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                SetState(previousState);
                 return;
-            }
 
             _apiClient.SetApiKey(apiKey);
             _apiClient.SetBaseUrl(baseUrl);
@@ -797,7 +898,6 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             if (newItems is null || newItems.Count == 0)
             {
                 _notifications.Show("Playback Error", "No files returned from playlist", NotificationSeverity.Error);
-                SetState(previousState);
                 return;
             }
 
@@ -814,7 +914,6 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 _notifications.Show("Playback Error",
                     "The playlist could not be moved onto this device's own session.",
                     NotificationSeverity.Error);
-                SetState(previousState);
                 return;
             }
 
@@ -835,47 +934,66 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 newItems.Count, PendingPlaylistEntries);
 
             _notifications.Show("Shoko Companion", "Added to playlist", NotificationSeverity.Info);
-            SetState(previousState);
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to append to playlist");
             _notifications.Show("Playback Error", ex.Message, NotificationSeverity.Error);
-            SetState(previousState);
         }
     }
 
     /// <summary>
     /// Stop playback and kill mpv if we launched it.
+    ///
+    /// <para>
+    ///   Ends in a <c>Stopped</c> report whatever happens on the way, mpv
+    ///   failing to stop included: the server applies no command itself, so
+    ///   a Stop that reports nothing leaves it showing playback that is no
+    ///   longer there. And it wins over a load still resolving, which checks
+    ///   the generation this bumps and gives up rather than report
+    ///   <c>Loading</c> over it.
+    /// </para>
     /// </summary>
     public async Task StopAsync()
     {
         if (_state is PlaybackState.Idle or PlaybackState.Stopped)
             return;
 
-        // Send final stop scrobble via session manager
-        var endPosition = _sessionManager.CurrentPositionMs;
-        _sessionManager.EndSession(endPosition);
-        CheckRestrictedPrivacyTransition();
+        Interlocked.Increment(ref _loadGeneration);
 
-        _sessionVideoId = null;
-        _userPaused = false;
-        _pausedForCache = false;
-        // A seek that never landed belongs to this playback, and the next
-        // one's first position is not where it landed.
-        _pendingSeek = false;
-        await _mpv.StopAsync();
+        try
+        {
+            // Send final stop scrobble via session manager
+            var endPosition = _sessionManager.CurrentPositionMs;
+            _sessionManager.EndSession(endPosition);
+            CheckRestrictedPrivacyTransition();
 
-        ResetDiscordPresence();
-        _duration = 0;
-        _mediaInfo.Clear();
-        _streamInitPhase = false;
-        _mpvPlaylistEntries = null;
-        _mpvCurrentPlaylistIndex = -1;
-        DeleteRewrittenPlaylists();
-        PlaylistChanged?.Invoke(this, EventArgs.Empty);
+            _sessionVideoId = null;
+            _mpvPathVideoId = null;
+            _userPaused = false;
+            _pausedForCache = false;
+            // A seek that never landed belongs to this playback, and the next
+            // one's first position is not where it landed.
+            _pendingSeek = false;
+            await StopMpvAsync();
 
-        SetState(PlaybackState.Stopped);
+            ResetDiscordPresence();
+            _duration = 0;
+            _mediaInfo.Clear();
+            _streamInitPhase = false;
+            _mpvPlaylistEntries = null;
+            _mpvCurrentPlaylistIndex = -1;
+            DeleteRewrittenPlaylists();
+            PlaylistChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Stop did not complete cleanly; reporting it anyway");
+        }
+        finally
+        {
+            SetState(PlaybackState.Stopped);
+        }
     }
 
     /// <summary>
@@ -918,7 +1036,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             {
                 var index = _mpvCurrentPlaylistIndex >= 0 ? _mpvCurrentPlaylistIndex : 0;
                 Logger.Info("Resume: starting playback at playlist index {Index}", index);
-                await _mpv.SendCommandAsync("playlist-play-index", [index]);
+                await PlayPlaylistIndexAsync(index);
             }
             return;
         }
@@ -1149,20 +1267,37 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
         try
         {
-            await _mpv.SendCommandAsync("playlist-play-index", [index]);
+            await PlayPlaylistIndexAsync(index);
             Logger.Info("JumpToPlaylistItem: playing playlist index {Index}", index);
 
-            // Start playback immediately. There may be no active session yet
-            // (e.g. jumping in a playlist added while mpv was idle), so don't
-            // rely on the pause observer to report the state change.
-            SetState(PlaybackState.Playing);
-
+            // No state is set here. mpv has not loaded the file yet, and it
+            // may start it paused: what the session is in from here is what
+            // file-loaded and the pause property say, and nothing else.
             await RefreshPlaylistFromMpvAsync();
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to jump to playlist item");
         }
+    }
+
+    /// <summary>
+    ///   Have mpv play the playlist entry at <paramref name="index"/>. With
+    ///   no session running, this is playback starting from nothing, and it
+    ///   goes through <see cref="ExpectSessionFor"/> like a Play does.
+    /// </summary>
+    /// <param name="index">The zero-based mpv playlist index.</param>
+    private async Task PlayPlaylistIndexAsync(int index)
+    {
+        if (!_sessionManager.HasActiveSession)
+        {
+            var videoId = _mpvPlaylistEntries is { } entries && index < entries.Count
+                ? entries[index].VideoId
+                : null;
+            ExpectSessionFor(videoId);
+        }
+
+        await _mpv.SendCommandAsync("playlist-play-index", [index]);
     }
 
     /// <inheritdoc/>
@@ -1757,7 +1892,11 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(path)) return;
 
-        if (Urls.TryGetVideoId(path) is not { } fileId) return;
+        // Recorded before anything else, unrecognised included: file-loaded
+        // starts a session for what mpv loaded, and a stale id would name
+        // the previous file.
+        _mpvPathVideoId = Urls.TryGetVideoId(path);
+        if (_mpvPathVideoId is not { } fileId) return;
 
         // Entering a new file — suppress treating default track selections as user changes
         _streamInitPhase = true;
@@ -2025,14 +2164,29 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             case "file-loaded":
                 Logger.Info("File loaded in mpv");
+                // A Stop during the awaits below has ended this playback, and
+                // a session started after it would report over its Stopped.
+                var loadedUnder = Volatile.Read(ref _loadGeneration);
                 await Task.Delay(FileLoadedDelayMs);
+                if (loadedUnder != Volatile.Read(ref _loadGeneration))
+                    break;
 
-                // First file: _sessionFileId is set. Subsequent files: the session is
-                // already active and CurrentFileId was set by HandlePathChanged.
-                var fileId = _sessionVideoId ?? _sessionManager.CurrentVideoId;
+                // A file loaded with no session running starts one, whatever
+                // made mpv load it: a Play, a Resume or a jump into a queue
+                // sitting in an idle mpv, or mpv moving on by itself. This is
+                // the one place a session starts. The file is the one mpv's
+                // path names, falling back to the one the command expected.
+                // With a session running it is the next file of a playlist,
+                // which HandlePathChanged already moved the session onto.
+                var startsSession = !_sessionManager.HasActiveSession;
+                var fileId = startsSession
+                    ? _mpvPathVideoId ?? _sessionVideoId
+                    : _sessionManager.CurrentVideoId;
                 if (fileId.HasValue)
                 {
                     var ud = await _apiClient.FetchFileUserDataAsync(fileId.Value);
+                    if (loadedUnder != Volatile.Read(ref _loadGeneration))
+                        break;
 
                     // Seek to position. A start position stated for this file
                     // (a Media Session play, or a queued item) settles the
@@ -2067,41 +2221,8 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                         }
                     }
 
-                    // Start the session on the first file (subsequent files reuse the active session)
-                    if (_sessionVideoId.HasValue)
-                    {
-                        var isRestricted = _streamMetadata.TryGetValue(fileId.Value, out var meta) && meta.IsRestricted;
-                        var seriesTitle = meta?.AnimeName;
-                        var episodeTitle = meta?.EpisodeName;
-                        var epNumber = meta?.EpisodeNumber ?? 0;
-                        var epCount = meta?.EpisodeCount ?? 0;
-                        var posterUrl = meta?.PosterUrl;
-                        var animeId = meta?.AnimeId ?? 0;
-
-                        if (episodeTitle is null && _playlistItems?.FirstOrDefault()?.Episode is { } ep)
-                            episodeTitle = ep.Title;
-
-                        var epIds = _playlistItems?.FirstOrDefault()?.Episode?.IDs;
-                        _sessionManager.StartSession(
-                            fileId.Value, resumeMs, _duration, isRestricted,
-                            seriesTitle, episodeTitle, epNumber, 0, epCount,
-                            posterUrl, animeId, epIds
-                        );
-
-                        CheckRestrictedPrivacyTransition();
-
-                        // If mpv was launched paused, the initial pause=true
-                        // observer event fired before StartSession. Transition
-                        // to Paused now so the session doesn't hang in Loading
-                        // and sync the session state so the scrobble timer stops.
-                        if (SettingsProvider.Instance.Settings.MpvStartPaused)
-                        {
-                            SetState(PlaybackState.Paused);
-                            _sessionManager.OnPauseChanged(true);
-                        }
-
-                        _sessionVideoId = null;
-                    }
+                    if (startsSession)
+                        StartSessionForLoadedFile(fileId.Value, resumeMs);
 
                     // External subtitles first: restoring may select one.
                     await AddExternalSubtitlesAsync(fileId.Value);
@@ -2169,6 +2290,62 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                     }
                 }
                 break;
+        }
+    }
+
+    /// <summary>
+    ///   Start the playback session for a file mpv has just loaded with no
+    ///   session running, and report the state mpv is actually in.
+    ///
+    ///   <para>
+    ///     The state comes from mpv's own <c>pause</c> property as last
+    ///     observed. Paused when mpv is paused and is staying so
+    ///     (<c>MpvStartPaused</c>), Playing when mpv is already running.
+    ///     Otherwise mpv is paused and <c>file-loaded</c> is about to unpause
+    ///     it, and the pause observer reports that change when mpv makes it,
+    ///     so the state stays as it was until then rather than claiming
+    ///     either.
+    ///   </para>
+    /// </summary>
+    /// <param name="fileId">The video mpv loaded.</param>
+    /// <param name="resumeMs">Where playback starts, in milliseconds.</param>
+    private void StartSessionForLoadedFile(int fileId, double resumeMs)
+    {
+        var isRestricted = _streamMetadata.TryGetValue(fileId, out var meta) && meta.IsRestricted;
+        var seriesTitle = meta?.AnimeName;
+        var episodeTitle = meta?.EpisodeName;
+        var epNumber = meta?.EpisodeNumber ?? 0;
+        var epCount = meta?.EpisodeCount ?? 0;
+        var posterUrl = meta?.PosterUrl;
+        var animeId = meta?.AnimeId ?? 0;
+
+        // The playlist item this file belongs to, which is not the first one
+        // when playback started part-way into a queue.
+        var episode = _playlistItems?
+            .FirstOrDefault(i => i.Parts?.Any(p => p.ID == fileId) == true)?.Episode
+            ?? _playlistItems?.FirstOrDefault()?.Episode;
+        if (episodeTitle is null && episode is not null)
+            episodeTitle = episode.Title;
+
+        StopIdleTimer();
+        EnsureDiscordInitialized();
+
+        _sessionManager.StartSession(
+            fileId, resumeMs, _duration, isRestricted,
+            seriesTitle, episodeTitle, epNumber, 0, epCount,
+            posterUrl, animeId, episode?.IDs
+        );
+        _sessionVideoId = null;
+
+        CheckRestrictedPrivacyTransition();
+
+        // mpv was launched paused, so its initial pause=true arrived before
+        // the session existed. Bring the session and the state to what mpv
+        // says now, unless mpv is about to be unpaused (see above).
+        if (SettingsProvider.Instance.Settings.MpvStartPaused || !_userPaused)
+        {
+            _sessionManager.OnPauseChanged(_userPaused);
+            SetState(ResolvePlayingState());
         }
     }
 
