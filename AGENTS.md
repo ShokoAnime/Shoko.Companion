@@ -89,7 +89,16 @@ route.
    server's to say
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
-5. **Report state**: via `UpdateState` on coordinator state changes and position ticks — `State`, the `CurrentItem` / `NextItem` / `PreviousItem` triple, `Position`, `Duration`, `IsPaused`, `Volume`, `IsMuted`, `PlaybackSpeed`, `IsFullscreen`, `Tracks`, and `Seeked` on the one report after a seek lands. A patch, not a snapshot: see the next two sections
+5. **Report state**: via `UpdateState` on coordinator state changes and position ticks — `State`, the `CurrentItem` / `NextItem` / `PreviousItem` triple, `Position`, `Duration`, `IsPaused`, `Volume`, `IsMuted`, `PlaybackSpeed`, `IsFullscreen`, `Tracks`, and `Seeked` on the one report after a seek lands. A patch, not a snapshot, and sent in the order it was made: see the next three sections
+
+**A command only asks; the report is the result.** Since Kaname #335
+(2026-10-20) the server applies no command itself: it sends the command,
+changes nothing, and moves its state only when this session reports. So
+**every command the companion carries out must end in a report of what
+actually happened**, read from mpv, and never of what the command assumed.
+A command that reports nothing leaves the server wrong until something else
+happens to be reported; a report of a result that did not happen leaves it
+wrong until something corrects it.
 
 ### The hub connection serialises with Newtonsoft, and a state report is a patch
 
@@ -166,6 +175,19 @@ No `KeepAliveInterval` or `ServerTimeout` is configured anywhere here, so
 SignalR's defaults stand: the client pings on its own when it has sent
 nothing for 15s, and its 30s server timeout is reset by anything received.
 What the far side makes of the silence is the far side's question.
+
+### And in the order it was made
+
+Reports go out **in the order they were made**. `ReportStateAsync` records
+`_lastState` and decides the stopped→idle timer at the call, in call order,
+and queues the send behind every send queued before it (`EnqueueSend`); the
+patch is taken inside the queue, so each one is against the report sent just
+before it. The same queue carries `UpdatePlaylist`, `UpdateCapabilities` and
+`UpdateSettings`. Each report used to be its own fire-and-forget task that
+awaited a capability push before it sent, and one held up there was
+overtaken by the next and landed after it: the server ended on the older
+state, and `_reportedState` on the older baseline. `ReportOrderTests` holds
+it, through `HubSendOverride`, the seam every queued send goes through.
 
 ### `Seeked` is an event, so it is never part of a baseline
 
@@ -383,15 +405,54 @@ PlayAsync(shokoUrl)
 
 ### Playback Flow (via Media Session API)
 
+**Every command ends in a report of what actually happened.** Since
+Kaname #335 the server applies no command itself and shows only what this
+session reports, so a command is not done when mpv has been told; it is done
+when mpv's answer has been reported. The rules that follow from it:
+
+- **Report from mpv, not from the command.** A state follows from mpv's own
+  events (`file-loaded`, the `pause` and `paused-for-cache` properties,
+  `end-file`, `eof-reached`), never from what a command expected mpv to do.
+  `JumpToPlaylistItem` used to report `Playing` as it sent the jump, which
+  was false whenever `MpvStartPaused` held mpv paused, and nothing ever
+  corrected it.
+- **Playback that starts from nothing starts a session, whatever started
+  it.** `PlayAsync`, and `Resume` or `JumpToPlaylistItem` on a queue sitting
+  in an idle mpv, all go through `ExpectSessionFor` (state `Loading`, the
+  video expected), and `file-loaded` with no session running starts one in
+  `StartSessionForLoadedFile`, the one place a session starts, for the file
+  mpv's `path` names. Only `PlayAsync` used to, and playback started from
+  the queue ran with no session: no ticks, a position stuck at 0, no
+  `Seeked`, `Tracks` always null and `SetTracks` ignored.
+- **A command that does not change what is playing leaves the state alone.**
+  A `Play` that appends reports the queue (`UpdatePlaylist`), not `Loading`;
+  it used to report `Loading` and then restore the state saved before it,
+  which overwrote a pause or a resume the viewer made in between.
+- **A Stop always reports, and wins.** `StopAsync` reports `Stopped` even
+  when mpv fails to stop, and bumps `_loadGeneration`, which a `PlayAsync`
+  still resolving checks after every await: one that lost to a Stop (or to a
+  newer Play) gives up without reporting, and `file-loaded` does the same.
+  Without it a Stop during the load was overwritten by the load's `Loading`
+  and mpv was launched anyway.
+- **The end-of-file pause is a stop.** A pause within 300 ms of the end with
+  nothing queued reports `Stopped` at the duration, not `Paused`, per
+  9f0dc90 (revam's ruling).
+
+`CommandReportTests` drives each command through the coordinator against a
+mocked mpv that answers a property set by reporting it back, with
+`FakeShokoServer` on loopback for the `shoko://` URLs to resolve against.
+
 When a `Play` command arrives via the SignalR hub:
-1. `MediaSessionClient.OnPlay(request)` is invoked
+1. `MediaSessionClient.HandlePlayAsync(request)` is invoked
 2. Constructs a `shoko://` URL from `request.VideoId` and delegates to `PlaybackCoordinator.PlayAsync()`
-3. The standard playlist resolution, mpv launch, and scrobble pipeline runs as normal
+3. The standard playlist resolution, mpv launch, and scrobble pipeline runs as normal; the session starts at `file-loaded`, and the state after `Loading` is mpv's to say
 
 When a `Resume` command arrives via the SignalR hub:
 1. `ResumeAsync()` is called on `PlaybackCoordinator`
-2. mpv's `pause` property is set to `false` — the current file continues playing
-3. No URL resolution, no playlist load — no media change
+2. mpv's `pause` property is set to `false` — the current file continues playing, and mpv's answer on `pause` is what reports `Playing`
+3. No URL resolution, no playlist load — no media change. Unless mpv is idle
+   with a queue (`AddToPlaylist` into an idle mpv): then it plays the queue's
+   current entry, as a `JumpToPlaylistItem` would, and that starts a session
 
 ## Settings
 
