@@ -967,6 +967,17 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     ///   the generation this bumps and gives up rather than report
     ///   <c>Loading</c> over it.
     /// </para>
+    /// <para>
+    ///   A Stop puts everything away, the queue included: pause is the
+    ///   control that keeps your place (Kaname #341, revam 2026-10-21). A
+    ///   handoff that moves playback carries the queue to its target and
+    ///   stops this session, so a queue kept here would be a second copy of
+    ///   it, and the server clears the current item once this session goes
+    ///   idle, so a queue kept past that disagrees with what it shows. The
+    ///   playlist dies with mpv, which this quits; the cache is cleared and
+    ///   the empty playlist reported whatever happened on the way, ahead of
+    ///   the <c>Stopped</c> report, as the stopped state is.
+    /// </para>
     /// </summary>
     public async Task StopAsync()
     {
@@ -995,10 +1006,7 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
             _duration = 0;
             _mediaInfo.Clear();
             _streamInitPhase = false;
-            _mpvPlaylistEntries = null;
-            _mpvCurrentPlaylistIndex = -1;
             DeleteRewrittenPlaylists();
-            PlaylistChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception ex)
         {
@@ -1006,6 +1014,10 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         }
         finally
         {
+            _mpvPlaylistEntries = null;
+            _mpvPlaylistEntryIds = [];
+            _mpvCurrentPlaylistIndex = -1;
+            PlaylistChanged?.Invoke(this, EventArgs.Empty);
             SetState(PlaybackState.Stopped);
         }
     }

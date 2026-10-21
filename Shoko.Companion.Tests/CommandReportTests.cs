@@ -704,4 +704,107 @@ public class CommandReportTests : IDisposable
         Assert.DoesNotContain(scrobbles, e => e.EventType is ScrobbleEventType.PlaybackEnd);
         await AssertEndsInErrorAsync("loading failed");
     }
+
+    // ── 7. A Stop puts the queue away, and says so before it says stopped ──
+
+    /// <summary>
+    ///   The playlist and state reports in the order <c>App</c> would send
+    ///   them, as <c>playlist:N</c> (N entries) and <c>state:S</c>.
+    /// </summary>
+    private ConcurrentQueue<string> RecordPlaylistAndState()
+    {
+        var sequence = new ConcurrentQueue<string>();
+        _coordinator.PlaylistChanged += (_, _) => sequence.Enqueue($"playlist:{_coordinator.CurrentPlaylist.Count}");
+        _coordinator.StateChanged += (_, e) => sequence.Enqueue($"state:{e.NewState}");
+        return sequence;
+    }
+
+    /// <summary>
+    ///   Three videos queued, the first one playing, and, when
+    ///   <paramref name="paused"/>, paused: pause is the control that keeps
+    ///   your place, and a Stop from it puts the queue away all the same.
+    /// </summary>
+    private async Task PlayAQueueOfThreeAsync(bool paused)
+    {
+        await QueueInIdleMpvAsync(VideoId, VideoId + 1, VideoId + 2);
+        await _coordinator.JumpToPlaylistItemAsync(_server.StreamUrl(VideoId));
+        await MpvLoadsAsync(VideoId);
+        await Until(() => _coordinator.CurrentState is PlaybackState.Playing, "Playing");
+        if (paused)
+        {
+            await _coordinator.PauseAsync();
+            Assert.Equal(PlaybackState.Paused, _coordinator.CurrentState);
+        }
+        Assert.Equal(3, _coordinator.CurrentPlaylist.Count);
+    }
+
+    /// <summary>
+    ///   That the queue is gone, and that the last thing said about the
+    ///   playlist is that it is empty, said ahead of the <c>Stopped</c>
+    ///   report and never contradicted after it.
+    /// </summary>
+    private void AssertTheQueueWasPutAway(ConcurrentQueue<string> sequence)
+    {
+        Assert.Equal(PlaybackState.Stopped, _coordinator.CurrentState);
+        Assert.Empty(_coordinator.CurrentPlaylist);
+
+        var said = sequence.ToList();
+        var stopped = said.IndexOf("state:Stopped");
+        Assert.True(stopped >= 0, "no Stopped report");
+        var lastPlaylist = said.FindLastIndex(e => e.StartsWith("playlist:", StringComparison.Ordinal));
+        Assert.True(lastPlaylist >= 0, "no playlist report");
+        Assert.Equal("playlist:0", said[lastPlaylist]);
+        Assert.True(lastPlaylist < stopped, $"the empty playlist came after Stopped: {string.Join(", ", said)}");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stop_PutsTheQueueAway_AndReportsTheEmptyPlaylistBeforeStopped(bool paused)
+    {
+        await PlayAQueueOfThreeAsync(paused);
+        var sequence = RecordPlaylistAndState();
+
+        await _coordinator.StopAsync();
+
+        AssertTheQueueWasPutAway(sequence);
+        // The queue is mpv's playlist, and it goes with the mpv the Stop quits.
+        _mpv.Verify(m => m.StopAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Stop_WhenMpvFailsToStop_StillPutsTheQueueAway()
+    {
+        await PlayAQueueOfThreeAsync(paused: false);
+        _mpv.Setup(m => m.StopAsync()).ThrowsAsync(new IOException("mpv went away"));
+        var sequence = RecordPlaylistAndState();
+
+        await _coordinator.StopAsync();
+
+        AssertTheQueueWasPutAway(sequence);
+    }
+
+    /// <summary>
+    ///   The last file of the queue playing to its end is not a Stop
+    ///   command, but it takes the same path: with nothing left to play,
+    ///   the companion stops, and the played entries go with mpv.
+    /// </summary>
+    [Fact]
+    public async Task TheLastFileEndingByItself_StopsAndEmptiesThePlaylist()
+    {
+        await QueueInIdleMpvAsync(VideoId, VideoId + 1);
+        await _coordinator.JumpToPlaylistItemAsync(_server.StreamUrl(VideoId));
+        await MpvLoadsAsync(VideoId);
+        await Until(() => _coordinator.CurrentState is PlaybackState.Playing, "Playing");
+
+        MpvStarts(VideoId + 1);
+        Event("file-loaded");
+        await Until(() => _manager.CurrentVideoId == VideoId + 1, "the last file's session");
+        var sequence = RecordPlaylistAndState();
+
+        Event("end-file", MpvMessage("end-file", new { reason = "eof", playlist_entry_id = EntryIdOf(VideoId + 1) }));
+        await Until(() => _coordinator.CurrentState is PlaybackState.Stopped, "Stopped");
+
+        AssertTheQueueWasPutAway(sequence);
+    }
 }

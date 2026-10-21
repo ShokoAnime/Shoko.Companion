@@ -322,6 +322,29 @@ pause detection reads `CurrentPositionMs`, which is unchanged, and fires in
 more cases now that the null no longer zeroes it. `EndOfFilePositionTests`
 holds all of it.
 
+### A Stop puts everything away, the queue included
+
+Pause is the control that keeps your place; Stop ends the item **and** the
+queue (Kaname #341, revam 2026-10-21). Two reasons: a handoff that moves
+playback carries the queue to its target and stops this session, so a queue
+kept here would be a second copy of it; and the server clears the current
+item once this session goes idle, so a queue kept past that disagrees with
+what it shows. A mistaken stop losing a built queue is the accepted cost.
+
+Here that is mostly structural: the queue *is* mpv's playlist, and
+`StopAsync` quits mpv, so the playlist goes with the process. What
+`StopAsync` owns is saying so: it clears the cached playlist and raises
+`PlaylistChanged` in its `finally`, ahead of `SetState(Stopped)`, so the
+hub hears `UpdatePlaylist([])` before the `stopped` report whatever failed on
+the way. The hub's `Stop` and the companion's own stops take the same path,
+and so does a natural end: the last file ending (`end-file` with `eof` and
+nothing pending, the end-of-file pause, mpv going idle) calls `StopAsync`,
+by which point nothing is left to play anyway. `stopped` turns into `idle`
+after `StoppedToIdleDelay`, 3 s (Kaname #340): the stopped state only exists
+so that watchers see the stop before nothing, and longer keeps a stopped
+device in every handoff list. `CommandReportTests` section 7 and
+`StoppedToIdleTests` hold it.
+
 ### Track selection goes both ways, and they are not the same way
 
 `SetTracks` is a **command**: the plugin tells this session to switch, and
