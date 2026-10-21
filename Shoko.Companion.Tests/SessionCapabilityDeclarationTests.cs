@@ -35,6 +35,7 @@ public class SessionCapabilityDeclarationTests
         s.AllowRemoteScreenshot = true;
         s.AllowRemoteVolumeControl = true;
         s.AllowSessionHandoff = true;
+        s.AllowSendingHandoff = true;
     }
 
     /// <summary>
@@ -179,5 +180,60 @@ public class SessionCapabilityDeclarationTests
         // where the two conditions actually differ.
         if (state is PlaybackState.Loading)
             Assert.False(declared.CanSeek);
+    }
+
+    /// <summary>
+    ///   Sending a handoff is the source's consent, and since the server
+    ///   refuses every handoff from a session that does not declare it,
+    ///   its own switch must reach the declaration and move it.
+    /// </summary>
+    [Fact]
+    public void AllowSendingHandoff_Moves_CanSendHandoff()
+    {
+        var s = SettingsProvider.Instance.Settings;
+        var before = MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing);
+        Assert.True(before.CanSendHandoff);
+
+        s.AllowSendingHandoff = false;
+
+        var after = MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing);
+        Assert.False(after.CanSendHandoff);
+        Assert.NotEqual(before, after);
+    }
+
+    /// <summary>
+    ///   And on nothing else. Remote play guards what other devices may
+    ///   start here, which a handoff away does not do; the receive switch
+    ///   is the other end's consent; privacy travels on the item; and the
+    ///   flag is consent rather than ability, so it holds while idle.
+    /// </summary>
+    [Theory]
+    [InlineData(PlaybackState.Idle)]
+    [InlineData(PlaybackState.Playing)]
+    [InlineData(PlaybackState.Stopped)]
+    public void CanSendHandoff_Ignores_TheOtherSwitches(PlaybackState state)
+    {
+        var s = SettingsProvider.Instance.Settings;
+        s.AllowRemotePlay = false;
+        s.AllowSessionHandoff = false;
+        s.PrivacyMode = true;
+        s.PrivacyModeDisableRemoteScreenshots = true;
+
+        var declared = MediaSessionClient.BuildCurrentCapabilities(state);
+
+        Assert.True(declared.CanSendHandoff);
+        Assert.False(declared.CanReceiveHandoff);
+    }
+
+    /// <summary>
+    ///   The key on the wire is the server's, spelled exactly.
+    /// </summary>
+    [Fact]
+    public void CanSendHandoff_Serialises_UnderTheServersKey()
+    {
+        var json = Newtonsoft.Json.JsonConvert.SerializeObject(
+            MediaSessionClient.BuildCurrentCapabilities(PlaybackState.Playing));
+
+        Assert.Contains("\"CanSendHandoff\":true", json);
     }
 }

@@ -105,13 +105,13 @@ Hovering over the icon shows what it's doing: Loading, Playing, Buffering, Pause
 
 ## 7. Media sessions
 
-If your Shoko Server has a plugin that provides media sessions, the companion can join them. Other devices can then see what's playing here, pause, seek, switch tracks, take screenshots, and send videos to play. You can also move a video from another device to this one and carry on where it left off.
+If your Shoko Server has a plugin that provides media sessions, the companion can join them. Other devices can then see what's playing here, pause, seek, switch tracks, take screenshots, and send videos to play. You can also move a video from another device to this one, or from this one to another, and carry on where it left off.
 
 To set it up, open the settings and go to **Media Session API**:
 
 1. Tick **Enable Media Session API**.
 2. Choose the connection under **Auto-connect connection**, so it connects whenever the companion starts. Only one connection can auto-connect. **Connect** and **Disconnect** work by hand.
-3. Decide what other devices may do: **Allow remote play**, **Allow remote volume control**, **Allow remote screenshot** and **Allow session handoff to this device**. All are on by default.
+3. Decide what other devices may do: **Allow remote play**, **Allow remote volume control**, **Allow remote screenshot**, **Allow session handoff to this device** and **Allow session handoff from this device**. All are on by default.
 
 While connected, the server keeps your watch state, not the companion. The README explains [who writes the watch state](./README.md#who-writes-the-watch-state) and why the switch happens only between videos.
 

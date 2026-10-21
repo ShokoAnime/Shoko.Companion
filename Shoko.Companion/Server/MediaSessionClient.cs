@@ -924,6 +924,17 @@ public sealed class MediaSessionClient : IAsyncDisposable
             // stays able to pull their own video over from their phone
             // instead of the feature quietly vanishing when they need it.
             CanReceiveHandoff = s.AllowSessionHandoff && s.AllowRemotePlay,
+            // The source's half of the same consent, and gated on nothing
+            // but its own switch. Remote play guards what other devices
+            // may start and control *here*; a handoff away starts nothing
+            // here, and the stop that ends a move is the same Stop this
+            // client accepts whatever remote play says (see CanStop). Not
+            // gated on the playback state for the reason receiving is not:
+            // it is consent, not ability, and an idle session handing off
+            // nothing is the server's to refuse. Nor on privacy: a private
+            // item crosses a handoff still marked private, and the server
+            // already knows to treat it so.
+            CanSendHandoff = s.AllowSendingHandoff,
             // mpv switches a track in place - it costs a decoder reset and
             // nothing else - so this is a plain yes wherever remote control
             // is allowed at all. It needs something loaded to switch
@@ -1270,6 +1281,9 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanReceiveHandoff")]
         public bool CanReceiveHandoff { get; init; } = false;
+
+        [JsonProperty("CanSendHandoff")]
+        public bool CanSendHandoff { get; init; } = false;
 
         [JsonProperty("CanSelectTracks")]
         public bool CanSelectTracks { get; init; } = false;

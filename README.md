@@ -109,6 +109,7 @@ Options that are enums are saved by name, as listed below.
 | `AllowRemoteVolumeControl` | bool | `true` | Let other devices change the volume and mute. |
 | `AllowRemoteScreenshot` | bool | `true` | Let other devices ask for a screenshot of the current frame. |
 | `AllowSessionHandoff` | bool | `true` | Let another device move what it's playing to this one. |
+| `AllowSendingHandoff` | bool | `true` | Let another device take what's playing here, moved or copied. |
 | `ScreenshotSubtitleBehavior` | enum | `OnlyWhenPaused` | Hide subtitles in remote screenshots: `Disabled` (never), `OnlyWhenPaused` or `Always`. |
 | `DiscordEnabled` | bool | `false` | Show Discord Rich Presence. |
 | `DiscordClientIdOverride` | string | `null` | Your own Discord application ID instead of the built-in one. |

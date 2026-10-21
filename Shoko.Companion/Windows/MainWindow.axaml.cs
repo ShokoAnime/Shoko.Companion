@@ -453,6 +453,7 @@ public partial class MainWindow : Window
         s.AllowRemoteVolumeControl = AllowRemoteVolumeControlCheck.IsChecked == true;
         s.AllowRemoteScreenshot = AllowRemoteScreenshotCheck.IsChecked == true;
         s.AllowSessionHandoff = AllowSessionHandoffCheck.IsChecked == true;
+        s.AllowSendingHandoff = AllowSendingHandoffCheck.IsChecked == true;
         s.ScreenshotSubtitleBehavior = ScreenshotSubtitleCombo.SelectedIndex switch
         {
             0 => ScreenshotSubtitleBehavior.Disabled,
@@ -625,6 +626,7 @@ public partial class MainWindow : Window
         AllowRemoteVolumeControlCheck.IsChecked = s.AllowRemoteVolumeControl;
         AllowRemoteScreenshotCheck.IsChecked = s.AllowRemoteScreenshot;
         AllowSessionHandoffCheck.IsChecked = s.AllowSessionHandoff;
+        AllowSendingHandoffCheck.IsChecked = s.AllowSendingHandoff;
         ScreenshotSubtitleCombo.SelectedIndex = s.ScreenshotSubtitleBehavior switch
         {
             ScreenshotSubtitleBehavior.Disabled => 0,

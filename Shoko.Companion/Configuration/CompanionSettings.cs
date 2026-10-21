@@ -240,6 +240,24 @@ public class CompanionSettings
     public bool AllowSessionHandoff { get; set; } = true;
 
     /// <summary>
+    /// Allow what is playing here to be handed off to another session,
+    /// at its position and with its track selection, whether the handoff
+    /// moves it (stopping it here) or copies it (leaving it playing).
+    /// When false, <c>CanSendHandoff</c> is reported as disabled and the
+    /// server refuses every handoff from this device.
+    /// <para>
+    /// Defaults to <c>true</c>, as the browser player does: being handed
+    /// off from is the less intrusive end of a handoff, since nothing
+    /// starts here. Deliberately independent of
+    /// <see cref="AllowRemotePlay"/>, which guards what other devices may
+    /// start and control on this one; a handoff away starts nothing here,
+    /// and the stop that ends a move is a command this device already
+    /// accepts whatever remote play says.
+    /// </para>
+    /// </summary>
+    public bool AllowSendingHandoff { get; set; } = true;
+
+    /// <summary>
     /// Master toggle for syncing playback events (start, end, pause, resume) to the Shoko server.
     /// When false, all syncing is disabled including live progress updates.
     /// <para>
