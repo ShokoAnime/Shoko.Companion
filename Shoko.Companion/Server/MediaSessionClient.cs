@@ -47,7 +47,16 @@ public sealed class MediaSessionClient : IAsyncDisposable
     ///   <see cref="EnqueueSend"/>.
     /// </summary>
     private Task _sendTail = Task.CompletedTask;
-    private static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    ///   How long a stopped session stays <c>stopped</c> before it reports
+    ///   <c>idle</c>. The stopped state only exists so that watchers see the
+    ///   stop before they see nothing, and a few seconds does that; longer
+    ///   keeps a device that has stopped in every handoff list for no reason
+    ///   (Kaname #340, revam 2026-10-21: 2 to 5 s).
+    /// </summary>
+    internal static readonly TimeSpan StoppedToIdleDelay = TimeSpan.FromSeconds(3);
+
     private PlaybackState _playbackState;
 
     /// <summary>
