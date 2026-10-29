@@ -298,4 +298,15 @@ public interface IPlaybackCoordinator
     /// <param name="text">The message to display.</param>
     /// <param name="durationMs">Display duration in milliseconds (default 3000).</param>
     Task ShowOsdTextAsync(string text, int durationMs = 3000);
+
+    /// <summary>
+    ///   Take what the media session server says this session's items are,
+    ///   from <c>RegisterSession</c>, <c>ReconnectSession</c> or a
+    ///   <c>SessionStateChanged</c> addressed to this session. Its titles
+    ///   replace the ones this client read from Shoko's playlist, in mpv's
+    ///   media title and in the Discord presence, for the item playing now
+    ///   and for the neighbours once they play.
+    /// </summary>
+    /// <param name="info">The session as the server describes it.</param>
+    Task ApplySessionInfoAsync(MediaSessionInfoDto info);
 }

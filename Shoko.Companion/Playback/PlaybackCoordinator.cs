@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -109,6 +110,21 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
     private int _loadGeneration;
     private List<PlaylistItemDto>? _playlistItems;
     private Dictionary<int, StreamMetadata> _streamMetadata = [];
+
+    // What the media session server says each video is called, by video id:
+    // its answer for this session's previous, current and next items as the
+    // server last described them. Preferred over _streamMetadata's titles,
+    // which are this client's own reading of Shoko's playlist. Emptied when
+    // the session goes away, so a companion with no server shows its own.
+    private readonly ConcurrentDictionary<int, ItemTitles> _serverTitles = new();
+
+    // The media title last handed to mpv and the video it named, so an
+    // answer arriving after file-loaded renames the window only when it
+    // changes something; file-loaded always sets it, since a new mpv holds
+    // none. The gate keeps file-loaded and an arriving answer from
+    // interleaving their read and their write.
+    private (int VideoId, string Title)? _shownMediaTitle;
+    private readonly SemaphoreSlim _mediaTitleGate = new(1, 1);
     private readonly Dictionary<int, MediaInfoDto> _mediaInfo = [];
     private Timer? _idleTimer;
     private DateTime? _idleStartTime;
@@ -134,6 +150,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         set
         {
             _mediaSessionId = value;
+
+            // The server's names are its answer while it is the one
+            // answering. Without a session there is nobody to keep them
+            // current, so the companion goes back to its own.
+            if (value is null)
+                _serverTitles.Clear();
 
             // Holding a session id is the whole of "a media session is
             // connected": MediaSessionClient sets one when it registers or
@@ -1961,8 +1983,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                     TvdbShow = meta.TvdbShow,
                     ImdbMovie = meta.ImdbMovie,
                 };
+                var server = TitlesFor(fileId);
                 _sessionManager.OnNextFile(fileId, 0, _duration, isRestricted,
-                    meta.AnimeName, epName, meta.EpisodeNumber, 0, meta.EpisodeCount,
+                    server is not null ? server.SeriesTitle : meta.AnimeName,
+                    server is not null ? server.EpisodeTitle : epName,
+                    server is { EpisodeNumber: > 0 } ? server.EpisodeNumber : meta.EpisodeNumber, 0,
+                    server is { EpisodeCount: > 0 } ? server.EpisodeCount : meta.EpisodeCount,
                     meta.PosterUrl, meta.AnimeId, nextEpIds);
                 CheckRestrictedPrivacyTransition();
             }
@@ -1983,6 +2009,14 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
 
             if (_sessionManager.HasActiveSession)
             {
+                if (TitlesFor(fileId) is { } server)
+                {
+                    seriesTitle = server.SeriesTitle;
+                    episodeTitle = server.EpisodeTitle;
+                    if (server.EpisodeNumber > 0) epNo = server.EpisodeNumber;
+                    if (server.EpisodeCount > 0) epCount = server.EpisodeCount;
+                }
+
                 _sessionManager.OnNextFile(fileId, 0, _duration, isRestricted,
                     seriesTitle, episodeTitle, epNo, 0, epCount,
                     posterUrl, animeId);
@@ -2265,17 +2299,12 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
                 // Initial track selection / restore is done — subsequent changes are user-driven
                 _streamInitPhase = false;
 
-                // Set the mpv window title from the m3u8 EXTINF display title
-                // so it shows the exact Shoko episode name, not whatever the
-                // media file embeds. Falls back to AnimeName - EpisodeName.
-                if (fileId.HasValue && _streamMetadata.TryGetValue(fileId.Value, out var winMeta))
-                {
-                    var winTitle = winMeta.M3u8Title
-                        ?? (winMeta.AnimeName is not null && winMeta.EpisodeName is not null
-                            ? $"{winMeta.AnimeName} - {winMeta.EpisodeName}"
-                            : winMeta.AnimeName ?? winMeta.EpisodeName ?? $"<Video {fileId.Value}>");
-                    await _mpv.SetPropertyAsync("force-media-title", winTitle);
-                }
+                // Name the mpv window and OSD after what the item is, not
+                // whatever the media file embeds: the media session
+                // server's answer, else this client's own reading of
+                // Shoko's playlist. See MediaTitleFor.
+                if (fileId.HasValue && MediaTitleFor(fileId.Value) is { } winTitle)
+                    await ShowMediaTitleAsync(fileId.Value, winTitle, always: true);
 
                 if (!SettingsProvider.Instance.Settings.MpvStartPaused)
                     await _mpv.SetPropertyAsync(MpvPropPause, false);
@@ -2503,6 +2532,14 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         if (episodeTitle is null && episode is not null)
             episodeTitle = episode.Title;
 
+        if (TitlesFor(fileId) is { } server)
+        {
+            seriesTitle = server.SeriesTitle;
+            episodeTitle = server.EpisodeTitle;
+            if (server.EpisodeNumber > 0) epNumber = server.EpisodeNumber;
+            if (server.EpisodeCount > 0) epCount = server.EpisodeCount;
+        }
+
         StopIdleTimer();
         EnsureDiscordInitialized();
 
@@ -2562,6 +2599,100 @@ public class PlaybackCoordinator : IPlaybackCoordinator, IAsyncDisposable
         catch (Exception ex)
         {
             Logger.Debug(ex, "Failed to show mpv OSD text");
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task ApplySessionInfoAsync(MediaSessionInfoDto info)
+    {
+        foreach (var item in new[] { info.PreviousItem, info.CurrentItem, info.NextItem })
+        {
+            if (item?.VideoId is not { } videoId)
+                continue;
+
+            if (ItemTitles.FromSessionItem(item) is { } titles)
+                _serverTitles[videoId] = titles;
+            else
+                // An item the server could not resolve. Whatever it said
+                // before stands, and with nothing before, ours does. Trace,
+                // since the description comes again with every report.
+                Logger.Trace("The media session server gave no titles for video {VideoId}; "
+                    + "showing {Source}", videoId,
+                    _serverTitles.ContainsKey(videoId) ? "its earlier answer" : "Shoko's playlist titles");
+        }
+
+        // The neighbours wait until they play: file-loaded and the session
+        // start read them from _serverTitles. The item playing is renamed now.
+        if (info.CurrentItem?.VideoId is not { } current
+            || !_serverTitles.TryGetValue(current, out var answer))
+            return;
+
+        if (_sessionManager.UpdateTitles(current, answer))
+            Logger.Info("Showing the media session server's titles for video {VideoId}: {Title}",
+                current, answer.MediaTitle);
+
+        if (_mpvPathVideoId == current)
+            await ShowMediaTitleAsync(current, answer.MediaTitle, always: false);
+    }
+
+    /// <summary>
+    ///   The titles the media session server gave a video, or <c>null</c>
+    ///   when it gave none, which is when this client's own stand.
+    /// </summary>
+    private ItemTitles? TitlesFor(int fileId)
+    {
+        if (_serverTitles.TryGetValue(fileId, out var titles))
+            return titles;
+
+        if (MediaSessionId is not null)
+            Logger.Debug("No titles from the media session server for video {VideoId} yet; "
+                + "showing Shoko's playlist titles", fileId);
+        return null;
+    }
+
+    /// <summary>
+    ///   mpv's media title for a video: the media session server's answer
+    ///   when it gave one, else Shoko's own playlist entry title, else the
+    ///   series and episode read from the entry's URL. <c>null</c> when this
+    ///   client knows nothing about the file at all, which leaves mpv's own.
+    /// </summary>
+    private string? MediaTitleFor(int fileId)
+    {
+        if (TitlesFor(fileId) is { } server)
+            return server.MediaTitle;
+
+        if (!_streamMetadata.TryGetValue(fileId, out var meta))
+            return null;
+
+        return meta.M3u8Title
+            ?? (meta.AnimeName is not null && meta.EpisodeName is not null
+                ? $"{meta.AnimeName} - {meta.EpisodeName}"
+                : meta.AnimeName ?? meta.EpisodeName ?? $"<Video {fileId}>");
+    }
+
+    /// <summary>
+    ///   Hand mpv a media title for the file it is playing. Unless
+    ///   <paramref name="always"/>, skipped when mpv already shows that title
+    ///   for that file.
+    /// </summary>
+    private async Task ShowMediaTitleAsync(int fileId, string title, bool always)
+    {
+        await _mediaTitleGate.WaitAsync();
+        try
+        {
+            if (!always && _shownMediaTitle is { } shown && shown.VideoId == fileId && shown.Title == title)
+                return;
+
+            await _mpv.SetPropertyAsync("force-media-title", title);
+            _shownMediaTitle = (fileId, title);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Could not set mpv's media title");
+        }
+        finally
+        {
+            _mediaTitleGate.Release();
         }
     }
 

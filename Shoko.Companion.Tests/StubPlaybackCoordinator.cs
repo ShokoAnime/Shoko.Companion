@@ -84,4 +84,13 @@ public sealed class StubPlaybackCoordinator : IPlaybackCoordinator
     public Task<byte[]?> CaptureScreenshotAsync(TimeSpan? position = null) => Task.FromResult<byte[]?>(null);
 
     public Task ShowOsdTextAsync(string text, int durationMs = 3000) => Task.CompletedTask;
+
+    /// <summary>Every session description handed in, in order.</summary>
+    public List<MediaSessionInfoDto> AppliedSessionInfo { get; } = [];
+
+    public Task ApplySessionInfoAsync(MediaSessionInfoDto info)
+    {
+        AppliedSessionInfo.Add(info);
+        return Task.CompletedTask;
+    }
 }

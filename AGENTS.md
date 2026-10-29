@@ -89,6 +89,7 @@ route.
    server's to say
 3. **Register**: calls `RegisterSession({ Name, DeviceType: "companion", ClientName: "Shoko Companion", HostName, Platform, Version, Capabilities, Settings })` — two separate declarations, re-pushed independently afterwards through `UpdateCapabilities` and `UpdateSettings`. Capabilities say what this build can do; settings say how the viewer configured it. See **Privacy Mode** below for the settings half.
 4. **Receive commands**: `Play` (new media with VideoId), `Resume` (unpause current), `Pause`, `Seek`, `Stop`, `SetTracks` → relayed to `PlaybackCoordinator`
+4a. **Receive its own description**: `SessionStateChanged(MediaSessionInfo)`, sent to this connection alone and unmasked, and the `RegisterSession` / `ReconnectSession` results → `PlaybackCoordinator.ApplySessionInfoAsync`, for what the server says the items are. See **What an item is called is the server's answer** below
 5. **Report state**: via `UpdateState` on coordinator state changes and position ticks — `State`, the `CurrentItem` / `NextItem` / `PreviousItem` triple, `Position`, `Duration`, `IsPaused`, `Volume`, `IsMuted`, `PlaybackSpeed`, `IsFullscreen`, `Tracks`, and `Seeked` on the one report after a seek lands. A patch, not a snapshot, and sent in the order it was made: see the next three sections
 
 **A command only asks; the report is the result.** Since Kaname #335
@@ -344,6 +345,43 @@ after `StoppedToIdleDelay`, 3 s (Kaname #340): the stopped state only exists
 so that watchers see the stop before nothing, and longer keeps a stopped
 device in every handoff list. `CommandReportTests` section 7 and
 `StoppedToIdleTests` hold it.
+
+### What an item is called is the server's answer
+
+The plugin resolves what each item of a session is, series and episode,
+and every other client shows that. revam, 2026-10-29: the companion shows
+the titles Kaname's session gives it, not what it gathered from Shoko's
+playlist API itself. The answer is moving behind a provider another plugin
+can supply (Kaname #309), whose titles cannot be derived from Shoko's, so a
+companion keeping its own would show a different name for the same thing.
+
+- **Where it comes from.** `SessionStateChanged`, which the server sends
+  the session's own connection unmasked whenever the session changes, plus
+  the `RegisterSession` / `ReconnectSession` results.
+  `MediaSessionClient.ApplyOwnSessionInfoAsync` drops a description of any
+  other session. `SessionItemInfoDto` reads `SeriesTitle`, `EpisodeTitle`,
+  `EpisodeNumber`, `EpisodeType` and `EpisodeCount`; it does **not** read
+  `Title`, which the plugin fills from this client's own report.
+- **What it names.** mpv's `force-media-title` (window and OSD), shaped
+  `Series - 3 - Episode` / `Series - S2 - Episode` like Shoko's EXTINF so
+  the shape does not change with the source (`ItemTitles`), and the Discord
+  presence through `PlaybackSessionManager.UpdateTitles`. The item playing
+  is renamed when its answer lands; the previous and next items' answers
+  are kept by video id and used when they play.
+- **The fallback.** Shoko's playlist titles (the `.m3u8` EXTINF and the
+  entry URL's `animeName` / `episodeName`) while the server has not
+  answered for an item, for an item it gave no titles for, and for
+  everything once the session id is cleared. Logged at Debug when it
+  happens.
+- **Still our own, because the server sends nothing for them:** mpv's
+  playlist entry titles (taken from the EXTINF, and what `UpdatePlaylist`
+  reports), the episode number range and the poster. The plugin's
+  `SeriesPoster` is a server-relative path Discord cannot load.
+- **Shoko's playlist API stays** for everything that is not a name:
+  resolving the stream URLs, the files, durations, media info, resume
+  positions and track restore.
+
+`ServerItemTitlesTests` holds it.
 
 ### Track selection goes both ways, and they are not the same way
 

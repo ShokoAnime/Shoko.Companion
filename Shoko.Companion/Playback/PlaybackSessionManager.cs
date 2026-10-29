@@ -570,6 +570,42 @@ public class PlaybackSessionManager
     }
 
     /// <summary>
+    ///   Rename the item playing, when the media session server answers what
+    ///   it is after the session has started. Re-raises the Discord presence
+    ///   when anything moved; does nothing for a file other than the one
+    ///   playing, since an answer about the previous file can land after the
+    ///   next one has started.
+    /// </summary>
+    /// <returns>Whether the session's titles changed.</returns>
+    internal bool UpdateTitles(int fileId, ItemTitles titles)
+    {
+        if (_session is null || _session.VideoId != fileId)
+            return false;
+
+        var epNumber = titles.EpisodeNumber > 0 ? titles.EpisodeNumber : _session.EpisodeNumber;
+        var epCount = titles.EpisodeCount > 0 ? titles.EpisodeCount : _session.EpisodeCount;
+        if (_session.SeriesTitle == titles.SeriesTitle
+            && _session.EpisodeTitle == titles.EpisodeTitle
+            && _session.EpisodeNumber == epNumber
+            && _session.EpisodeCount == epCount)
+            return false;
+
+        _session.SeriesTitle = titles.SeriesTitle;
+        _session.EpisodeTitle = titles.EpisodeTitle;
+        _session.EpisodeNumber = epNumber;
+        _session.EpisodeCount = epCount;
+        EmitDiscordPresence();
+        return true;
+    }
+
+    /// <summary>
+    ///   The current session's series and episode titles, both null when
+    ///   there is no session.
+    /// </summary>
+    public (string? Series, string? Episode) CurrentTitles
+        => (_session?.SeriesTitle, _session?.EpisodeTitle);
+
+    /// <summary>
     /// Called when the playlist advances to the next file (end-file with non-eof reason).
     /// Resets scrobble throttling state without ending the session.
     /// </summary>

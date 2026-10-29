@@ -403,6 +403,11 @@ public sealed class MediaSessionClient : IAsyncDisposable
             }
         });
 
+        // The server's description of this session, sent to this connection
+        // alone and unmasked whenever the session changes. Read for what the
+        // server says the items are; see ApplyOwnSessionInfoAsync.
+        _connection.On<MediaSessionInfoDto>("SessionStateChanged", info => ApplyOwnSessionInfoAsync(info));
+
         _connection.Closed += async error =>
         {
             Logger.Warn(error, "MediaSession: Connection closed");
@@ -439,6 +444,28 @@ public sealed class MediaSessionClient : IAsyncDisposable
     }
 
     /// <summary>
+    ///   Take the server's description of this session: what it says the
+    ///   previous, current and next items are, which is what this companion
+    ///   shows them as. A description of any other session is ignored: the
+    ///   server sends this connection its own, but a session that also
+    ///   observes would hear everybody's.
+    /// </summary>
+    internal async Task ApplyOwnSessionInfoAsync(MediaSessionInfoDto? info)
+    {
+        if (info is null || _sessionId is not { } own || info.SessionId != own)
+            return;
+
+        try
+        {
+            await _coordinator.ApplySessionInfoAsync(info);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "MediaSession: Could not apply the server's description of this session");
+        }
+    }
+
+    /// <summary>
     /// Handle a Play command from the hub.
     /// </summary>
     private async Task HandlePlayAsync(PlaybackRequestDto request)
@@ -470,10 +497,11 @@ public sealed class MediaSessionClient : IAsyncDisposable
         {
             try
             {
-                var result = await _connection.InvokeAsync<SessionInfoDto>(
+                var result = await _connection.InvokeAsync<MediaSessionInfoDto>(
                     "ReconnectSession", _sessionId.Value, _lastState, _coordinator.CurrentPlaylist);
                 SetSessionId(result.SessionId);
                 Logger.Info("MediaSession: Reconnected to session {SessionId}", result.SessionId);
+                await ApplyOwnSessionInfoAsync(result);
 
                 // Push current capabilities — they may have changed while
                 // disconnected (e.g. playback stopped, _playbackState
@@ -541,7 +569,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
                 Settings = BuildCurrentSettings(),
             };
 
-            var result = await _connection.InvokeAsync<SessionInfoDto>(
+            var result = await _connection.InvokeAsync<MediaSessionInfoDto>(
                 "RegisterSession", deviceInfo, _lastState, _coordinator.CurrentPlaylist);
             SetSessionId(result.SessionId);
             // Registration carried both declarations, so record them as
@@ -551,6 +579,7 @@ public sealed class MediaSessionClient : IAsyncDisposable
             _lastSentSettings = deviceInfo.Settings;
             _lastSentCapabilities = deviceInfo.Capabilities;
             Logger.Info("MediaSession: Registered as session {SessionId}", result.SessionId);
+            await ApplyOwnSessionInfoAsync(result);
         }
         catch (Exception ex)
         {
@@ -1296,12 +1325,6 @@ public sealed class MediaSessionClient : IAsyncDisposable
 
         [JsonProperty("CanSelectTracks")]
         public bool CanSelectTracks { get; init; } = false;
-    }
-
-    private sealed class SessionInfoDto
-    {
-        [JsonProperty("SessionId")]
-        public Guid SessionId { get; init; }
     }
 
     /// <summary>
